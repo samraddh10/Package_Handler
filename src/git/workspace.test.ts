@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createWorkspace,
+  diffWorkspace,
   newRunId,
   parseTarget,
   removeWorkspace,
+  restoreFiles,
   WorkspaceError,
 } from './workspace.js';
 
@@ -146,5 +148,71 @@ describe('newRunId', () => {
     const id = newRunId(new Date('2026-10-10T14:32:05.123Z'));
 
     expect(id).toMatch(/^20261010-143205-[a-z0-9]{1,4}$/);
+  });
+});
+
+describe('diffWorkspace and restoreFiles', () => {
+  let repoDir: string;
+
+  beforeEach(() => {
+    repoDir = mkdtempSync(join(tmpdir(), 'upgrade-agent-diff-'));
+    git(repoDir, 'init', '-q', '-b', 'main');
+    mkdirSync(join(repoDir, 'src'));
+    writeFileSync(join(repoDir, 'src', 'app.js'), 'app.del(x);\n');
+    writeFileSync(join(repoDir, 'README.md'), 'hello\n');
+    git(repoDir, 'add', '-A');
+    git(repoDir, 'commit', '-q', '-m', 'init');
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it('diffs changed and new files, and only the paths asked for', async () => {
+    writeFileSync(join(repoDir, 'src', 'app.js'), 'app.delete(x);\n');
+    writeFileSync(join(repoDir, 'src', 'routes.js'), 'module.exports = {};\n');
+    writeFileSync(join(repoDir, 'README.md'), 'changed too\n');
+
+    const diff = await diffWorkspace(repoDir, ['src/app.js', 'src/routes.js']);
+    expect(diff).toContain('-app.del(x);\n+app.delete(x);');
+    expect(diff).toContain('new file mode');
+    expect(diff).toContain('+module.exports = {};');
+    expect(diff).not.toContain('README');
+    expect(await diffWorkspace(repoDir, [])).toBe('');
+  });
+
+  it('takes paths literally, not as git patterns', async () => {
+    // As a pattern, "[ab].md" would also match a.md.
+    writeFileSync(join(repoDir, '[ab].md'), 'odd name\n');
+    writeFileSync(join(repoDir, 'a.md'), 'innocent\n');
+    const diff = await diffWorkspace(repoDir, ['[ab].md']);
+    expect(diff).toContain('+odd name');
+    expect(diff).not.toContain('innocent');
+  });
+
+  it('includes a new file that .gitignore matches', async () => {
+    writeFileSync(join(repoDir, '.gitignore'), 'generated/\n');
+    mkdirSync(join(repoDir, 'generated'));
+    writeFileSync(join(repoDir, 'generated', 'out.js'), 'made by the agent\n');
+
+    const diff = await diffWorkspace(repoDir, ['generated/out.js']);
+    expect(diff).toContain('+made by the agent');
+
+    await restoreFiles(repoDir, [{ path: 'generated/out.js', isNew: true }]);
+    expect(existsSync(join(repoDir, 'generated', 'out.js'))).toBe(false);
+  });
+
+  it('restores changed files and removes new ones', async () => {
+    writeFileSync(join(repoDir, 'src', 'app.js'), 'app.delete(x);\n');
+    writeFileSync(join(repoDir, 'src', 'routes.js'), 'new\n');
+    await diffWorkspace(repoDir, ['src/app.js', 'src/routes.js']);
+
+    await restoreFiles(repoDir, [
+      { path: 'src/app.js', isNew: false },
+      { path: 'src/routes.js', isNew: true },
+    ]);
+    expect(readFileSync(join(repoDir, 'src', 'app.js'), 'utf8')).toBe('app.del(x);\n');
+    expect(existsSync(join(repoDir, 'src', 'routes.js'))).toBe(false);
+    expect(git(repoDir, 'status', '--porcelain')).toBe('');
   });
 });
