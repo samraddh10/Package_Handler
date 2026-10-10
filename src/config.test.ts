@@ -29,7 +29,7 @@ describe('parseConfig', () => {
       maxInputTokens: 6000,
     });
     expect(config.github.token).toBeUndefined();
-    expect(config.redis.url).toBe('redis://localhost:6379');
+    expect(config.redis).toEqual({ url: 'redis://localhost:6379', password: undefined });
     expect(config.sandbox).toEqual({
       image: 'node:22-bookworm',
       cpus: 2,
