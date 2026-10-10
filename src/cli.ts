@@ -2,9 +2,15 @@
 import { readFileSync } from 'node:fs';
 import { Command, InvalidArgumentError } from 'commander';
 import Docker from 'dockerode';
+import semver from 'semver';
+import { openCache } from './cache/cache.js';
+import { analyzeUpgrade, describeAnalysis } from './changelog/analyze.js';
+import { GitHubChangelogSource, PackageNotFoundError } from './changelog/source.js';
 import { type Config, ConfigError, loadEnvFile, parseConfig } from './config.js';
-import { checkDocker, describeConfig, describeDockerCheck } from './doctor.js';
+import { checkDocker, checkRedis, describeConfig, describeDockerCheck } from './doctor.js';
 import { createWorkspace, parseTarget, removeWorkspace, WorkspaceError } from './git/workspace.js';
+import { buildProviders } from './llm/providers.js';
+import { describeLlmEvent, LlmRouter } from './llm/router.js';
 import { SandboxError } from './sandbox/errors.js';
 import { pingDocker, Sandbox, sweepContainers } from './sandbox/sandbox.js';
 import { describeScan, ScanError, scanWorkspace } from './scanner/scan.js';
@@ -125,9 +131,77 @@ program
   });
 
 program
+  .command('analyze')
+  .description(
+    'Read the release notes of a major upgrade and list what can break. ' +
+      'Uses one LLM call per major version crossed; results are cached in Redis.',
+  )
+  .argument('<package>', 'npm package name, e.g. express')
+  .argument('<from>', 'the version you have, e.g. 4.21.2')
+  .argument('<to>', 'the version to upgrade to, e.g. 5.3.0')
+  .option('--refresh', 'ignore cached analyses and ask the LLM again')
+  .action(async (packageName: string, from: string, to: string, options: { refresh?: boolean }) => {
+    for (const version of [from, to]) {
+      if (semver.valid(version) === null) {
+        console.error(`"${version}" is not a version number like 4.21.2.`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    const loaded = loadConfig();
+    if (loaded === null) {
+      return;
+    }
+    const { config } = loaded;
+
+    const providers = buildProviders(config.llm);
+    if (providers.length === 0) {
+      console.warn(
+        'Warning: no LLM provider is ready (see `doctor`); breaking changes will be unknown.',
+      );
+    }
+    const router = new LlmRouter({
+      providers,
+      maxCallsPerRun: config.llm.maxCallsPerRun,
+      onEvent: (event) => console.log(`  llm: ${describeLlmEvent(event)}`),
+    });
+    const cache = await openCache({
+      ...config.redis,
+      onWarning: (message) => console.warn(`Warning: ${message}`),
+    });
+
+    try {
+      console.log(`Analyzing ${packageName} ${from} → ${to}`);
+      const analysis = await analyzeUpgrade(packageName, from, to, {
+        cache,
+        router,
+        source: new GitHubChangelogSource({ githubToken: config.github.token }),
+        refresh: options.refresh === true,
+        onProgress: (message) => console.log(`  ${message}`),
+      });
+      console.log('');
+      for (const line of describeAnalysis(analysis)) {
+        console.log(line);
+      }
+      const stats = router.getStats();
+      const tokens =
+        stats.calls > 0 ? `, ${stats.inputTokens} input + ${stats.outputTokens} output tokens` : '';
+      console.log(`\nLLM calls: ${stats.calls}${tokens}. Cache: ${cache.kind}.`);
+    } catch (error) {
+      if (!(error instanceof PackageNotFoundError)) {
+        throw error;
+      }
+      console.error(`\nAnalyze stopped: ${error.message}`);
+      process.exitCode = 1;
+    } finally {
+      await cache.close();
+    }
+  });
+
+program
   .command('doctor')
-  .description('Check that your setup is valid: config, Docker, and a sandbox smoke test')
-  .option('--skip-docker', 'only check the config, without talking to Docker')
+  .description('Check that your setup is valid: config, Docker, a sandbox smoke test, and Redis')
+  .option('--skip-docker', 'only check the config, without talking to Docker or Redis')
   .action(async (options: { skipDocker?: boolean }) => {
     const loaded = loadConfig();
     if (loaded === null) {
@@ -149,6 +223,7 @@ program
     for (const line of describeDockerCheck(check)) {
       console.log(line);
     }
+    console.log((await checkRedis(config.redis)).line);
     if (!check.ok) {
       process.exitCode = 1;
     }
