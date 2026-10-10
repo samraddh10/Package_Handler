@@ -3,14 +3,22 @@ import { readFileSync } from 'node:fs';
 import { Command, InvalidArgumentError } from 'commander';
 import Docker from 'dockerode';
 import semver from 'semver';
+import { describeAgentEvent } from './agent/fix-agent.js';
 import { openCache } from './cache/cache.js';
 import { analyzeUpgrade, describeAnalysis } from './changelog/analyze.js';
 import { GitHubChangelogSource, PackageNotFoundError } from './changelog/source.js';
 import { type Config, ConfigError, loadEnvFile, parseConfig } from './config.js';
 import { checkDocker, checkRedis, describeConfig, describeDockerCheck } from './doctor.js';
-import { createWorkspace, parseTarget, removeWorkspace, WorkspaceError } from './git/workspace.js';
+import {
+  createWorkspace,
+  diffWorkspace,
+  parseTarget,
+  removeWorkspace,
+  WorkspaceError,
+} from './git/workspace.js';
 import { buildProviders } from './llm/providers.js';
 import { describeLlmEvent, LlmRouter } from './llm/router.js';
+import { describeUpgrade, upgradePackage } from './pipeline/upgrade-package.js';
 import { SandboxError } from './sandbox/errors.js';
 import { pingDocker, Sandbox, sweepContainers } from './sandbox/sandbox.js';
 import { describeScan, ScanError, scanWorkspace } from './scanner/scan.js';
@@ -192,6 +200,163 @@ program
         throw error;
       }
       console.error(`\nAnalyze stopped: ${error.message}`);
+      process.exitCode = 1;
+    } finally {
+      await cache.close();
+    }
+  });
+
+program
+  .command('upgrade')
+  .description(
+    'Upgrade one package in a repo: scan, read the changelog (majors), install and test in ' +
+      'Docker, and let the fix agent repair the code if the tests break. Opens no pull request.',
+  )
+  .argument('<repo>', 'GitHub URL or local path of the repo')
+  .argument('<package>', 'the outdated dependency to upgrade, e.g. express')
+  .option('--keep', 'keep the clone with the changes in it, to look at afterwards')
+  .action(async (repo: string, packageName: string, options: { keep?: boolean }) => {
+    const loaded = loadConfig();
+    if (loaded === null) {
+      return;
+    }
+    const { config } = loaded;
+
+    const docker = new Docker();
+    try {
+      await pingDocker(docker);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`${reason}\nStart Docker Desktop, then run upgrade again.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const providers = buildProviders(config.llm);
+    if (providers.length === 0) {
+      console.warn(
+        'Warning: no LLM provider is ready (see `doctor`); a broken upgrade cannot be fixed.',
+      );
+    }
+    const router = new LlmRouter({
+      providers,
+      maxCallsPerRun: config.llm.maxCallsPerRun,
+      // Successful calls already show up as agent steps; only trouble is worth a line.
+      onEvent: (event) => {
+        if (!event.ok) {
+          console.log(`    llm: ${describeLlmEvent(event)}`);
+        }
+      },
+      onWait: (event) =>
+        console.log(
+          `    llm: every provider is rate limited; waiting ${Math.ceil(event.waitMs / 1000)} s for ${event.providers.join(', ')}`,
+        ),
+    });
+    const cache = await openCache({
+      ...config.redis,
+      onWarning: (message) => console.warn(`Warning: ${message}`),
+    });
+
+    try {
+      await sweepContainers(docker);
+      const target = parseTarget(repo);
+      console.log(`Cloning ${target.label} ...`);
+      const workspace = await createWorkspace(target, { workspaceDir: config.workspaceDir });
+      try {
+        console.log(
+          `Repo:      ${target.label}, commit ${workspace.commit.slice(0, 7)} on ${workspace.branch}`,
+        );
+        const progress = (message: string) => console.log(`  ${message}`);
+
+        console.log('\nScan:');
+        const scan = await scanWorkspace(workspace.repoDir, {
+          limits: config.sandbox,
+          createSandbox: () =>
+            Sandbox.create({ ...config.sandbox, docker, name: `scan-${target.label}` }),
+          onProgress: progress,
+        });
+        const candidate = scan.upgrades.find((upgrade) => upgrade.name === packageName);
+        if (candidate === undefined) {
+          const skipped = scan.skipped.find((skip) => skip.name === packageName);
+          console.error(
+            skipped === undefined
+              ? `\n${packageName} is not an outdated direct dependency of this repo.`
+              : `\n${packageName} is skipped: ${skipped.reason}`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        let analysis = null;
+        if (candidate.bump === 'major') {
+          console.log(`\nChangelog: ${candidate.name} ${candidate.from} → ${candidate.to}`);
+          analysis = await analyzeUpgrade(candidate.name, candidate.from, candidate.to, {
+            cache,
+            router,
+            source: new GitHubChangelogSource({ githubToken: config.github.token }),
+            onProgress: progress,
+          });
+          console.log(
+            `  ${analysis.breakingChanges.length} breaking change(s) listed` +
+              (analysis.complete ? '' : ' (incomplete: some notes could not be read)'),
+          );
+        }
+
+        console.log(`\nUpgrade: ${candidate.name} ${candidate.from} → ${candidate.to}`);
+        const result = await upgradePackage(workspace.repoDir, candidate, {
+          limits: config.sandbox,
+          fixAgent: config.fixAgent,
+          createSandbox: () =>
+            Sandbox.create({ ...config.sandbox, docker, name: `upgrade-${candidate.name}` }),
+          router,
+          analysis,
+          onProgress: progress,
+          onAgentEvent: (event) => console.log(`  ${describeAgentEvent(event)}`),
+        });
+
+        console.log('');
+        for (const line of describeUpgrade(result)) {
+          console.log(line);
+        }
+        // The lockfile's diff is thousands of lines of hashes; the code diff is what matters.
+        const codeFiles = result.files.filter(
+          (file) => !/^(package-lock|npm-shrinkwrap)\.json$/.test(file),
+        );
+        const diff = await diffWorkspace(workspace.repoDir, codeFiles);
+        if (diff !== '') {
+          console.log('\nChanges (lockfile left out):', `\n${diff}`);
+        }
+        if (result.attemptedDiff !== null) {
+          console.log('\nThe agent’s attempt (not kept):', `\n${result.attemptedDiff}`);
+        }
+        const stats = router.getStats();
+        console.log(
+          `\nLLM calls: ${stats.calls}, ${stats.inputTokens} input + ${stats.outputTokens} output tokens. Cache: ${cache.kind}.`,
+        );
+        if (options.keep === true) {
+          console.log(`The clone, with these changes not committed: ${workspace.repoDir}`);
+        }
+        if (result.status === 'install-failed' || result.status === 'tampered') {
+          process.exitCode = 1;
+        }
+      } finally {
+        if (options.keep !== true) {
+          await removeWorkspace(workspace);
+        }
+      }
+    } catch (error) {
+      if (
+        !(error instanceof ScanError) &&
+        !(error instanceof WorkspaceError) &&
+        !(error instanceof SandboxError) &&
+        !(error instanceof PackageNotFoundError)
+      ) {
+        throw error;
+      }
+      console.error(`\nUpgrade stopped: ${error.message}`);
+      if (error instanceof ScanError && error.details !== null) {
+        console.error(error.details.replace(/^/gm, '  '));
+      }
       process.exitCode = 1;
     } finally {
       await cache.close();
