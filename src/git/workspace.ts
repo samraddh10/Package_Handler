@@ -153,6 +153,52 @@ export async function removeWorkspace(workspace: Workspace): Promise<void> {
 }
 
 /**
+ * The clone's changes to `paths` as a unified diff against the cloned commit.
+ *
+ * New files are included: `git add --intent-to-add` records that a file is
+ * coming without staging its content, which is enough for `git diff HEAD` to
+ * show it as a new file. `--force` includes a file that .gitignore matches,
+ * which git would otherwise refuse to add. Paths are taken literally
+ * (`--literal-pathspecs`), so a file named like a git pattern, e.g. `[ab].md`,
+ * is still just a file name.
+ */
+export async function diffWorkspace(repoDir: string, paths: string[]): Promise<string> {
+  if (paths.length === 0) {
+    return '';
+  }
+  const repo = git(repoDir);
+  await repo.raw(['--literal-pathspecs', 'add', '--intent-to-add', '--force', '--', ...paths]);
+  return repo.raw(['--literal-pathspecs', 'diff', 'HEAD', '--', ...paths]);
+}
+
+/**
+ * Puts files back the way the cloned commit has them. Files the commit does
+ * not have are deleted, and forgotten by git's index.
+ */
+export async function restoreFiles(
+  repoDir: string,
+  files: Array<{ path: string; isNew: boolean }>,
+): Promise<void> {
+  const repo = git(repoDir);
+  const tracked = files.filter((file) => !file.isNew).map((file) => file.path);
+  if (tracked.length > 0) {
+    await repo.raw(['--literal-pathspecs', 'checkout', 'HEAD', '--', ...tracked]);
+  }
+  for (const file of files.filter((candidate) => candidate.isNew)) {
+    await repo.raw([
+      '--literal-pathspecs',
+      'rm',
+      '--cached',
+      '--quiet',
+      '--ignore-unmatch',
+      '--',
+      file.path,
+    ]);
+    await rm(join(repoDir, file.path), { force: true });
+  }
+}
+
+/**
  * Environment variables that simple-git guards: everything starting with GIT_
  * (several of them make git run another program, e.g. GIT_ASKPASS or
  * GIT_SSH_COMMAND), plus the editor, pager and prompt settings. simple-git
