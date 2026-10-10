@@ -43,7 +43,7 @@ export function describeConfig(config: Config, envFileFound: boolean): string[] 
     `Redis:        ${redactPassword(config.redis.url)}, password ${config.redis.password ? 'set' : 'not set'}`,
     `Sandbox:      ${sandbox.image}, ${sandbox.cpus} CPUs, ${sandbox.memoryMb} MB memory`,
     `Timeouts:     install ${sandbox.installTimeoutSec}s, tests ${sandbox.testTimeoutSec}s`,
-    `Fix agent:    up to ${fixAgent.maxAttempts} test attempts, ${fixAgent.maxSteps} steps`,
+    `Fix agent:    up to ${fixAgent.maxAttempts} test attempts, ${fixAgent.maxSteps} steps, ${fixAgent.maxTokens.toLocaleString('en-US')} tokens per package`,
   );
   return lines;
 }
