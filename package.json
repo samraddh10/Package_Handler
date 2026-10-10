@@ -1,0 +1,33 @@
+{
+  "name": "upgrade-agent",
+  "version": "0.1.0",
+  "description": "Upgrades outdated npm dependencies one package at a time: tests each upgrade in Docker, fixes breakages with an LLM agent, and opens a pull request per package.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "upgrade-agent": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "agent": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^22.20.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
