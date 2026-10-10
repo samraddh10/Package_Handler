@@ -80,10 +80,19 @@ export interface LlmStats {
   outputTokens: number;
 }
 
+/** The router is pausing because every usable provider is cooling down for a short while. */
+export interface LlmWaitEvent {
+  type: 'llm.wait';
+  task: LlmTask;
+  waitMs: number;
+  providers: ProviderName[];
+}
+
 export interface LlmRouterOptions {
   providers: LlmProvider[];
   maxCallsPerRun: number;
   onEvent?: (event: LlmCallEvent) => void;
+  onWait?: (event: LlmWaitEvent) => void;
   /** Per-attempt time limit in ms. */
   timeoutMs?: number;
   // Injected so tests control time and randomness instead of really sleeping.
@@ -98,6 +107,12 @@ export const MAX_ATTEMPTS_PER_PROVIDER = 3;
 export const MAX_RATE_LIMIT_WAIT_SEC = 20;
 /** Cool-down after a provider used all its tries on 429s without saying how long to wait. */
 export const DEFAULT_COOLDOWN_SEC = 60;
+/**
+ * When every usable provider is cooling down and one is free again within this
+ * many seconds, the router waits for it once instead of giving up. That covers
+ * per-minute limits; a daily quota asks for hours and still fails fast.
+ */
+export const MAX_COOLDOWN_WAIT_SEC = 60;
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 /**
@@ -115,6 +130,7 @@ export class LlmRouter {
   private readonly providers: LlmProvider[];
   private readonly maxCallsPerRun: number;
   private readonly onEvent: (event: LlmCallEvent) => void;
+  private readonly onWait: (event: LlmWaitEvent) => void;
   private readonly timeoutMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -130,6 +146,7 @@ export class LlmRouter {
     this.providers = options.providers;
     this.maxCallsPerRun = options.maxCallsPerRun;
     this.onEvent = options.onEvent ?? (() => {});
+    this.onWait = options.onWait ?? (() => {});
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = options.now ?? Date.now;
@@ -145,6 +162,11 @@ export class LlmRouter {
    * Sends one request, falling back through the providers until one answers.
    * Throws LlmUnavailableError when none can; every other error is a bug or a
    * cancellation and is rethrown as it is.
+   *
+   * If the only thing standing in the way is a short cool-down (a per-minute
+   * limit), it waits for the first provider to come back and goes round once
+   * more. With a single free-tier provider, a 20-step fix-agent session would
+   * otherwise end at the first busy minute.
    */
   async callLLM<TOOLS extends ToolSet = ToolSet, OUTPUT extends OutputInterface = never>(
     task: LlmTask,
@@ -159,21 +181,58 @@ export class LlmRouter {
       messages: request.messages,
       toolNames: Object.keys(request.tools ?? {}),
     });
-    const details: string[] = [];
+    for (let round = 1; ; round++) {
+      const details: string[] = [];
+      for (const provider of this.providers) {
+        const skip = this.skipReason(provider, estimatedTokens);
+        if (skip !== null) {
+          details.push(`${provider.name}: skipped, ${skip}`);
+          continue;
+        }
+        const outcome = await this.tryProvider(task, provider, request);
+        if ('response' in outcome) {
+          return outcome.response;
+        }
+        details.push(`${provider.name}: ${outcome.failure}`);
+      }
 
-    for (const provider of this.providers) {
-      const skip = this.skipReason(provider, estimatedTokens);
-      if (skip !== null) {
-        details.push(`${provider.name}: skipped, ${skip}`);
-        continue;
+      const wait = round === 1 ? this.shortCooldown(estimatedTokens) : null;
+      if (wait === null) {
+        throw new LlmUnavailableError('all-failed', details);
       }
-      const outcome = await this.tryProvider(task, provider, request);
-      if ('response' in outcome) {
-        return outcome.response;
-      }
-      details.push(`${provider.name}: ${outcome.failure}`);
+      this.onWait({ type: 'llm.wait', task, ...wait });
+      await this.sleep(wait.waitMs);
     }
-    throw new LlmUnavailableError('all-failed', details);
+  }
+
+  /**
+   * How long until the first usable provider's cool-down ends, when that is
+   * within MAX_COOLDOWN_WAIT_SEC. null when no provider is cooling down, or
+   * none would be back soon enough, or none could take this request anyway.
+   */
+  private shortCooldown(
+    estimatedTokens: number,
+  ): { waitMs: number; providers: ProviderName[] } | null {
+    const now = this.now();
+    const cooling = this.providers.filter((provider) => {
+      const until = this.coolingUntil.get(provider.name);
+      return (
+        until !== undefined &&
+        until > now &&
+        !this.disabled.has(provider.name) &&
+        estimatedTokens <= provider.maxInputTokens
+      );
+    });
+    if (cooling.length === 0) {
+      return null;
+    }
+    const waitMs = Math.min(
+      ...cooling.map((provider) => (this.coolingUntil.get(provider.name) ?? now) - now),
+    );
+    if (waitMs > MAX_COOLDOWN_WAIT_SEC * 1000) {
+      return null;
+    }
+    return { waitMs, providers: cooling.map((provider) => provider.name) };
   }
 
   /** Why a provider should not even be tried, or null to try it. */
