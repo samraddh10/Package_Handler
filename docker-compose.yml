@@ -5,11 +5,22 @@ name: upgrade-agent
 services:
   redis:
     image: redis:8-alpine
-    # Bound to 127.0.0.1 so only this machine can reach it: it has no password.
+    # Bound to 127.0.0.1 so other machines cannot reach it. That alone is not
+    # enough: sandbox containers reach it via host.docker.internal while npm
+    # install has the network, so it also needs a password. Compose reads
+    # REDIS_PASSWORD from .env.
     ports:
       - "127.0.0.1:6379:6379"
     # Append-only file: the changelog cache survives restarts.
-    command: ["redis-server", "--appendonly", "yes"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    environment:
+      # Lets redis-cli in the healthcheck log in without the password on its command line.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     volumes:
       - redis-data:/data
     healthcheck:
