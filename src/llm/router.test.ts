@@ -5,7 +5,13 @@ import { z } from 'zod';
 import type { ProviderName } from '../config.js';
 import { LlmUnavailableError } from './errors.js';
 import type { LlmProvider } from './providers.js';
-import { backoffMs, describeLlmEvent, type LlmCallEvent, LlmRouter } from './router.js';
+import {
+  backoffMs,
+  describeLlmEvent,
+  type LlmCallEvent,
+  LlmRouter,
+  type LlmWaitEvent,
+} from './router.js';
 
 /**
  * The router's fallback matrix, driven by scripted mock models. Each mock
@@ -67,12 +73,14 @@ function provider(name: ProviderName, steps: Step[], maxInputTokens = 100_000) {
 
 function makeRouter(providers: LlmProvider[], maxCallsPerRun = 60) {
   const events: LlmCallEvent[] = [];
+  const waitEvents: LlmWaitEvent[] = [];
   const waits: number[] = [];
   let clock = 1_000_000;
   const router = new LlmRouter({
     providers,
     maxCallsPerRun,
     onEvent: (event) => events.push(event),
+    onWait: (event) => waitEvents.push(event),
     sleep: async (ms) => {
       waits.push(ms);
       clock += ms;
@@ -83,6 +91,7 @@ function makeRouter(providers: LlmProvider[], maxCallsPerRun = 60) {
   return {
     router,
     events,
+    waitEvents,
     waits,
     advance: (ms: number) => {
       clock += ms;
@@ -178,6 +187,51 @@ describe('LlmRouter', () => {
     // An hour later it is tried again.
     advance(3600 * 1000);
     expect((await router.callLLM('changelog', prompt)).provider).toBe('gemini');
+  });
+
+  it('waits once for a provider that is only cooling down for a minute, instead of giving up', async () => {
+    const perMinute = JSON.stringify({ error: { details: [{ retryDelay: '45s' }] } });
+    const gemini = provider('gemini', [apiError(429, {}, perMinute), 'after the wait']);
+    const { router, waits, waitEvents } = makeRouter([gemini.entry]);
+
+    const response = await router.callLLM('fix', prompt);
+
+    expect(response.result.text).toBe('after the wait');
+    expect(gemini.calls()).toBe(2);
+    expect(waits).toEqual([45_000]);
+    expect(waitEvents).toEqual([
+      { type: 'llm.wait', task: 'fix', waitMs: 45_000, providers: ['gemini'] },
+    ]);
+  });
+
+  it('does not wait for a daily quota, and waits at most once per call', async () => {
+    const daily = JSON.stringify({ error: { details: [{ retryDelay: '3600s' }] } });
+    const quota = provider('gemini', [apiError(429, {}, daily)]);
+    const first = makeRouter([quota.entry]);
+    await expect(first.router.callLLM('fix', prompt)).rejects.toThrow(LlmUnavailableError);
+    expect(first.waits).toEqual([]);
+
+    const perMinute = JSON.stringify({ error: { details: [{ retryDelay: '30s' }] } });
+    const busy = provider('gemini', [apiError(429, {}, perMinute)]);
+    const second = makeRouter([busy.entry]);
+    await expect(second.router.callLLM('fix', prompt)).rejects.toThrow(LlmUnavailableError);
+    expect(second.waits).toEqual([30_000]);
+    expect(busy.calls()).toBe(2);
+  });
+
+  it('does not wait for a cooling provider that could not take the request anyway', async () => {
+    const perMinute = JSON.stringify({ error: { details: [{ retryDelay: '30s' }] } });
+    const groq = provider('groq', [apiError(429, {}, perMinute)], 100);
+    const gemini = provider('gemini', ['from gemini', apiError(401)]);
+    const { router, waits } = makeRouter([groq.entry, gemini.entry]);
+
+    // groq starts cooling down; gemini answers.
+    expect((await router.callLLM('fix', prompt)).provider).toBe('gemini');
+    // A big request: groq is too small for it, and gemini's key stops working.
+    await expect(router.callLLM('fix', { prompt: 'x'.repeat(4000) })).rejects.toThrow(
+      LlmUnavailableError,
+    );
+    expect(waits).toEqual([]);
   });
 
   it('401 → disables the provider for the rest of the run', async () => {
