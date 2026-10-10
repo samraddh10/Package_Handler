@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!!notes", "!!.code-review-graph"]
+    "includes": ["**", "!!notes", "!!.code-review-graph", "!!tests/fixtures"]
   },
   "formatter": {
     "enabled": true,

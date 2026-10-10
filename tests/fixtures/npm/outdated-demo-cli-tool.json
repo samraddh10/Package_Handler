@@ -1,0 +1,16 @@
+{
+  "chalk": {
+    "current": "4.1.2",
+    "wanted": "4.1.2",
+    "latest": "6.0.1",
+    "dependent": "project",
+    "location": "/home/node/project/node_modules/chalk"
+  },
+  "commander": {
+    "current": "11.1.0",
+    "wanted": "11.1.0",
+    "latest": "15.0.0",
+    "dependent": "project",
+    "location": "/home/node/project/node_modules/commander"
+  }
+}

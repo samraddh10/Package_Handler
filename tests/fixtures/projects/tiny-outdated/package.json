@@ -1,0 +1,13 @@
+{
+  "name": "tiny-outdated",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Test fixture: the smallest project with one outdated dependency and passing tests.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "is-number": "^6.0.0"
+  }
+}

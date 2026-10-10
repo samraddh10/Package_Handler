@@ -45,6 +45,15 @@ describe('CappedOutput', () => {
     expect(text).not.toContain('aaaa');
   });
 
+  it('keeps everything from the start when the tail is switched off', () => {
+    // What exec() does with maxOutputChars, for JSON that is useless when cut.
+    const output = new CappedOutput({ headChars: 5, tailChars: 0 });
+    output.write('12345678');
+
+    expect(output.truncated).toBe(true);
+    expect(output.text().startsWith('12345\n... 3 characters of output removed ...')).toBe(true);
+  });
+
   it('reports exactly how much it dropped', () => {
     const output = new CappedOutput({ headChars: 2, tailChars: 2 });
     output.write('12345678');

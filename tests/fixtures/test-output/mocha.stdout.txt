@@ -1,0 +1,39 @@
+
+> capture-mocha@1.0.0 test
+> mocha
+
+
+
+  math
+    ✔ adds
+    1) multiplies
+    2) parses a price
+
+
+  1 passing (3ms)
+  2 failing
+
+  1) math
+       multiplies:
+
+      AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+5 !== 6
+
+      + expected - actual
+
+      -5
+      +6
+      
+      at Context.<anonymous> (test/math.test.js:6:33)
+      at process.processImmediate (node:internal/timers:484:21)
+
+  2) math
+       parses a price:
+     TypeError: Cannot read properties of null (reading 'replace')
+      at parsePrice (src/math.js:10:22)
+      at Context.<anonymous> (test/math.test.js:7:43)
+      at process.processImmediate (node:internal/timers:484:21)
+
+
+

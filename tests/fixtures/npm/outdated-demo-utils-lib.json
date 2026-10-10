@@ -1,0 +1,16 @@
+{
+  "date-fns": {
+    "current": "2.30.0",
+    "wanted": "2.30.0",
+    "latest": "4.4.0",
+    "dependent": "project",
+    "location": "/home/node/project/node_modules/date-fns"
+  },
+  "lodash": {
+    "current": "4.17.20",
+    "wanted": "4.18.1",
+    "latest": "4.18.1",
+    "dependent": "project",
+    "location": "/home/node/project/node_modules/lodash"
+  }
+}

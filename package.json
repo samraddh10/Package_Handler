@@ -23,6 +23,8 @@
   "dependencies": {
     "commander": "^15.0.0",
     "dockerode": "^5.0.1",
+    "semver": "^7.8.5",
+    "simple-git": "^4.0.2",
     "tar-fs": "^3.1.3",
     "tar-stream": "^3.2.2",
     "zod": "^4.6.5"
@@ -31,6 +33,7 @@
     "@biomejs/biome": "^2.5.14",
     "@types/dockerode": "^4.0.2",
     "@types/node": "^22.20.4",
+    "@types/semver": "^7.8.0",
     "@types/tar-fs": "^2.0.4",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

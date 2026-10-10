@@ -79,6 +79,13 @@ export interface ExecOptions {
   /** Folder to run in, relative to the repo root. Defaults to the repo root. */
   cwd?: string;
   env?: Record<string, string>;
+  /**
+   * Keep up to this many characters of stdout and of stderr from the start,
+   * instead of the usual first 20k + last 40k. For machine-readable output such
+   * as JSON, where a copy with the middle cut out is useless. Anything longer is
+   * still dropped and `truncated` is set, so the caller can refuse to parse it.
+   */
+  maxOutputChars?: number;
 }
 
 /**
@@ -279,9 +286,9 @@ export class Sandbox {
   /** exec() with an absolute working folder, so prepare() can run outside the project. */
   private async run(
     command: string[],
-    options: { timeoutSec: number; workingDir: string; env?: Record<string, string> },
+    options: Omit<ExecOptions, 'cwd'> & { workingDir: string },
   ): Promise<ExecResult> {
-    const { timeoutSec, workingDir, env } = options;
+    const { timeoutSec, workingDir, env, maxOutputChars } = options;
     if (command.length === 0) {
       throw new SandboxError('exec() needs a command');
     }
@@ -295,8 +302,9 @@ export class Sandbox {
     }
 
     const wrapped = ['timeout', '-s', 'KILL', String(timeoutSec), ...command];
-    const stdout = new CappedOutput();
-    const stderr = new CappedOutput();
+    const capture = maxOutputChars === undefined ? {} : { headChars: maxOutputChars, tailChars: 0 };
+    const stdout = new CappedOutput(capture);
+    const stderr = new CappedOutput(capture);
     const startedAt = Date.now();
     let watchdogFired = false;
 
