@@ -1,0 +1,702 @@
+[
+  {
+    "tag_name": "v5.3.0",
+    "name": "v5.3.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## Highlights\r\n\r\n### 🐞 Bug fixes\r\n\r\n- Fixed HTTP header conflict between Content-Length and Transfer-Encoding in res.send - by [@YuryShkoda](https://github.com/YuryShkoda) in [#4893](https://github.com/expressjs/express/pull/4893)\r\n\r\n\r\n    Fixed the behavior of `res.send()` to prevent conflicts between `Content-Length` and `Transfer-Encoding` HTTP headers in responses. The `Content-Length` header in `res.send()` is now only added when a `Transfer-Encoding` header is not present, complying with the HTTP specification that states both headers should not coexist in the same response. ETag generation is unaffected by the presence of a `Transfer-Encoding` header - by [@cuishuang](https://github.com/cuishuang) in [#7459](https://github.com/expressjs/express/pull/7459)\r\n\r\n* Upgrade `qs` to `^6.16.0`, which fixes [CVE-2026-2391](https://www.cve.org/CVERecord?id=CVE-2026-2391) ([GHSA-w7fw-mjwx-w883](https://github.com/ljharb/qs/security/advisories/GHSA-w7fw-mjwx-w883)), [CVE-2026-82417](https://www.cve.org/CVERecord?id=CVE-2026-82417) ([GHSA-4mjr-xmp4-gh2g](https://github.com/advisories/GHSA-4mjr-xmp4-gh2g)) and [CVE-2026-82562](https://www.cve.org/CVERecord?id=CVE-2026-82562) ([GHSA-x5fp-wj9c-mxmx](https://github.com/advisories/GHSA-x5fp-wj9c-mxmx)): `arrayLimit` bypasses in comma parsing and a denial of service via an attacker-controlled `isBuffer` - by [@davetashner](https://github.com/davetashner) in [#7057](https://github.com/expressjs/express/pull/7057) and [#7478](https://github.com/expressjs/express/pull/7478), and [@cyphercodes](https://github.com/cyphercodes) in [#7305](https://github.com/expressjs/express/pull/7305)\r\n\r\n* Upgrade `proxy-addr` to `^2.0.8`, which fixes [CVE-2026-90711](https://www.cve.org/CVERecord?id=CVE-2026-90711) - by [@lazerg](https://github.com/lazerg) in [#7474](https://github.com/expressjs/express/pull/7474)\r\n\r\n### 🚀 Improvements\r\n\r\n* Allow conditional revalidation for QUERY requests. `req.fresh` previously only validated freshness for GET and HEAD requests, so QUERY responses never returned 304 despite a matching validator. Since QUERY is a safe, idempotent, and cacheable method that supports conditional requests, it is now included in the freshness check - by [@Cherry](https://github.com/Cherry) in [#7366](https://github.com/expressjs/express/pull/7366)\r\n\r\n    ```js\r\n    // QUERY /reports with If-None-Match: \"12345\"\r\n    app.query('/reports', (req, res) => {\r\n      res.set('ETag', '\"12345\"');\r\n      res.send(results); // now responds 304 Not Modified\r\n    });\r\n    ```\r\n\r\n* Improve HTML structure in `res.redirect()` responses when HTML format is accepted by adding `<!DOCTYPE html>`, `<title>`, and `<body>` tags for better browser compatibility - by [@Bernice55231](https://github.com/Bernice55231) in [#5167](https://github.com/expressjs/express/pull/5167)\r\n\r\n* When calling `app.render` with options set to null, the locals object is handled correctly, preventing unexpected errors and making the method behave the same as when options is omitted or an empty object is passed - by [AkaHarshit](https://github.com/AkaHarshit) in [#6903](https://github.com/expressjs/express/pull/6903)\r\n\r\n    ```js\r\n    app.render('index', null, callback); // now works as expected\r\n    ```\r\n\r\n* Upgrade `content-type` to `^2.0.0`, bringing a faster parser (~1.5x quicker `Content-Type` parsing/formatting in `res.send()`) along with a behavior change: `res.send()` now keeps any existing parameters when adding the charset and no longer throws on a `Content-Type` that fails to parse. `type-is` is upgraded to `^2.1.0` as part of the same change - by [@blakeembrey](https://github.com/blakeembrey) in [#7234](https://github.com/expressjs/express/pull/7234)\r\n\r\n    ```js\r\n    res.set('Content-Type', 'text/plain; foo=bar').send('hey');\r\n    // -> Content-Type: text/plain; foo=bar; charset=utf-8\r\n    ```\r\n\r\n* The default error handler now logs the full error object instead of only its stack trace, so nested details such as `Error.cause` and library-specific properties (e.g. Sequelize's `parent`/`original`) are no longer swallowed - by [@Nitin-Mohapatra](https://github.com/Nitin-Mohapatra) in [#6464](https://github.com/expressjs/express/pull/6464)\r\n\r\n* Upgrade `content-disposition` to `^2.0.1`, which changes the `Content-Disposition` header emitted by `res.download()`, `res.attachment()`, and `res.sendFile()`: file names that are valid HTTP tokens are no longer wrapped in quotes. This is equivalent per RFC 6266, but applications asserting on the exact header bytes should update their expectations - by [@blakeembrey](https://github.com/blakeembrey) in [#7233](https://github.com/expressjs/express/pull/7233)\r\n\r\n    ```js\r\n    res.attachment('user.html');\r\n    // before -> Content-Disposition: attachment; filename=\"user.html\"\r\n    // after  -> Content-Disposition: attachment; filename=user.html\r\n    ```\r\n\r\n* Upgrade `body-parser` to `^2.3.0`, which fixes [CVE-2026-12590](https://www.cve.org/CVERecord?id=CVE-2026-12590) ([GHSA-v422-hmwv-36x6](https://github.com/expressjs/body-parser/security/advisories/GHSA-v422-hmwv-36x6)): an invalid `limit` option value caused request body size enforcement to be silently disabled (fail-open), allowing a denial of service via arbitrarily large payloads. Invalid `limit` values now throw at parser initialization instead of being ignored - by [@Mayvis](https://github.com/Mayvis) in [#7390](https://github.com/expressjs/express/pull/7390)\r\n\r\n### ⚡ Performance\r\n\r\n* Avoid duplicate Content-Type header processing in `res.send()` when sending string responses without an explicit Content-Type header - by [@bjohansebas](https://github.com/bjohansebas) in [#6991](https://github.com/expressjs/express/pull/6991)\r\n\r\n\r\n## What's Changed\r\n* 📝 add note to history by @ctcpip in https://github.com/expressjs/express/pull/6946\r\n* docs: add @rxmarbles to triagers by @rxmarbles in https://github.com/expressjs/express/pull/6953\r\n* docs: use global Security policy by @UlisesGascon in https://github.com/expressjs/express/pull/6570\r\n* doc: fix security.md link to point to security tab by @jonchurch in https://github.com/expressjs/express/pull/6976\r\n* build(deps): bump actions/download-artifact from 6.0.0 to 7.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6961\r\n* fix: enhance req.acceptsCharsets method by @Abdel-Monaam-Aouini in https://github.com/expressjs/express/pull/6088\r\n* build(deps): bump actions/upload-artifact from 5.0.0 to 6.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6965\r\n* build(deps): bump github/codeql-action from 4.31.6 to 4.31.9 by @dependabot[bot] in https://github.com/expressjs/express/pull/6964\r\n* fix(deps): update version lib qs by @gabrieel1007 in https://github.com/expressjs/express/pull/6969\r\n* build(deps): bump actions/checkout from 6.0.0 to 6.0.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/6963\r\n* build(deps): bump actions/setup-node from 6.0.0 to 6.1.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6962\r\n* nominate @krzysdz to triage team by @bjohansebas in https://github.com/expressjs/express/pull/6482\r\n* Polish HTML structure of the response in the res.redirect() function by @Bernice55231 in https://github.com/expressjs/express/pull/5167\r\n* docs: fix JSDoc for req.accepts() return value and parameter format by @marcosmol204 in https://github.com/expressjs/express/pull/6936\r\n* test: added unit tests for utils.compileETag to cover valid and invalid inputs by @sukdev24 in https://github.com/expressjs/express/pull/6534\r\n* chore: remove benchmarks directory by @bjohansebas in https://github.com/expressjs/express/pull/6992\r\n* feat: do not modify the Content-Type twice when sending strings by @bjohansebas in https://github.com/expressjs/express/pull/6991\r\n* feat: Allow passing null or undefined as the value for options in app.render by @AkaHarshit in https://github.com/expressjs/express/pull/6903\r\n* test: add test for normalizeType fallback when mime lookup fails by @Ayoub-Mabrouk in https://github.com/expressjs/express/pull/6894\r\n* fix: search example to support Redis v4+ and Express 4/5 by @vinybrun in https://github.com/expressjs/express/pull/6274\r\n* docs: Add @GroophyLifefor to the triage team by @bjohansebas in https://github.com/expressjs/express/pull/6995\r\n* build(deps): bump actions/checkout from 6.0.1 to 6.0.2 by @dependabot[bot] in https://github.com/expressjs/express/pull/7011\r\n* build(deps): bump actions/setup-node from 6.1.0 to 6.2.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7012\r\n* build(deps): bump github/codeql-action from 4.31.9 to 4.32.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7013\r\n* Remove duplicate tests in res.location and res.jsonp by @GroophyLifefor in https://github.com/expressjs/express/pull/6996\r\n* fix: bump qs minimum to ^6.14.2 for CVE-2026-2391 by @davetashner in https://github.com/expressjs/express/pull/7057\r\n* docs: fix README security policy by @pavan-sh in https://github.com/expressjs/express/pull/7029\r\n* include edge case tests for `res.type()` by @IshitaSingh0822 in https://github.com/expressjs/express/pull/7037\r\n* build(deps): bump github/codeql-action from 4.32.0 to 4.32.4 by @dependabot[bot] in https://github.com/expressjs/express/pull/7072\r\n* build(deps): bump actions/download-artifact from 7.0.0 to 8.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7073\r\n* build(deps): bump actions/upload-artifact from 6.0.0 to 7.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7074\r\n* docs: replace dummy with placeholder in example comments by @samtuckerdavis in https://github.com/expressjs/express/pull/7064\r\n* docs: remove dead link from Readme by @ayushshukla1807 in https://github.com/expressjs/express/pull/7136\r\n* fix: update deprecated npm install docs URL in Readme.md by @Vansh1811 in https://github.com/expressjs/express/pull/7159\r\n* build(deps): bump actions/download-artifact from 8.0.0 to 8.0.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7148\r\n* build(deps): bump actions/setup-node from 6.2.0 to 6.3.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7149\r\n* build(deps): bump github/codeql-action from 4.32.4 to 4.35.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7150\r\n* fixed typo in history.md by @opensourcezeal in https://github.com/expressjs/express/pull/7191\r\n* chore: ensure safe config in the npmrc by @sheplu in https://github.com/expressjs/express/pull/7144\r\n* ci: build express with node.js v26 by @shivarm in https://github.com/expressjs/express/pull/7218\r\n* build(deps): bump actions/setup-node from 6.3.0 to 6.4.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7210\r\n* build(deps): bump actions/upload-artifact from 7.0.0 to 7.0.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7211\r\n* build(deps): bump github/codeql-action from 4.35.1 to 4.35.2 by @dependabot[bot] in https://github.com/expressjs/express/pull/7212\r\n* fix: bump qs minimum to 6.15.2 by @cyphercodes in https://github.com/expressjs/express/pull/7305\r\n* Upgrade `content-type` by @blakeembrey in https://github.com/expressjs/express/pull/7234\r\n* Improve error logging by logging full error object by @Nitin-Mohapatra in https://github.com/expressjs/express/pull/6464\r\n* fix: replace deprecated trimRight() with trimEnd() by @tejgokani in https://github.com/expressjs/express/pull/7265\r\n* build(deps): bump github/codeql-action from 4.35.2 to 4.36.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7297\r\n* Upgrade `content-disposition` by @blakeembrey in https://github.com/expressjs/express/pull/7233\r\n* fix(res.send): add Content-Length header only if Transfer-Encoding is not present by @YuryShkoda in https://github.com/expressjs/express/pull/4893\r\n* docs: use the new logo by @bjohansebas in https://github.com/expressjs/express/pull/7316\r\n* build(deps): bump actions/checkout from 6.0.2 to 7.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7345\r\n* build(deps-dev): bump morgan from 1.10.1 to 1.11.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7353\r\n* feat: allow conditional revalidation for QUERY requests by @Cherry in https://github.com/expressjs/express/pull/7366\r\n* build(deps-dev): bump hbs from 4.2.0 to 4.2.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7152\r\n* deps: bump body-parser to ^2.3.0 to fix CVE-2026-12590 by @Mayvis in https://github.com/expressjs/express/pull/7390\r\n* build(deps): bump actions/checkout from 7.0.0 to 7.0.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7403\r\n* docs(res.location): clean up deprecated back string references by @spellsaif in https://github.com/expressjs/express/pull/7406\r\n* build(deps): bump coverallsapp/github-action from 2.3.7 to 2.3.8 by @dependabot[bot] in https://github.com/expressjs/express/pull/7399\r\n* build(deps): bump github/codeql-action/upload-sarif from 4.36.0 to 4.37.3 by @dependabot[bot] in https://github.com/expressjs/express/pull/7400\r\n* chore: group github actions updates by @Phillip9587 in https://github.com/expressjs/express/pull/7460\r\n* build(deps-dev): bump hbs from 4.2.1 to 4.3.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7450\r\n* build(deps): bump the github-actions group with 5 updates by @dependabot[bot] in https://github.com/expressjs/express/pull/7462\r\n* build(deps-dev): bump morgan from 1.11.0 to 1.12.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/7461\r\n* docs: fix capitalization of GitHub Discussions in Readme by @Kimkoungsoo in https://github.com/expressjs/express/pull/7426\r\n* ci: add npm staged publication with dist-tag support by @UlisesGascon in https://github.com/expressjs/express/pull/7464\r\n* fix(res.send): preserve ETag generation with Transfer-Encoding by @cuishuang in https://github.com/expressjs/express/pull/7459\r\n* deps: proxy-addr@^2.0.8 by @lazerg in https://github.com/expressjs/express/pull/7474\r\n* deps: bump qs minimum to 6.16.0 by @davetashner in https://github.com/expressjs/express/pull/7478\r\n* build(deps-dev): bump morgan from 1.12.0 to 1.12.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7493\r\n* docs: add missing apostrophe in \"can\\u0027t\" (lib + example) by @haimingZZ in https://github.com/expressjs/express/pull/7483\r\n* build(deps-dev): bump hbs from 4.3.0 to 4.3.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/7500\r\n* build(deps): bump the github-actions group with 3 updates by @dependabot[bot] in https://github.com/expressjs/express/pull/7499\r\n* docs: fix pass-through typos by @whoalin1 in https://github.com/expressjs/express/pull/7509\r\n* docs: fix typos and a stale API reference in lib comments by @fmtappendf in https://github.com/expressjs/express/pull/7512\r\n* Release: 5.3.0 by @UlisesGascon in https://github.com/expressjs/express/pull/7468\r\n\r\n## New Contributors\r\n* @rxmarbles made their first contribution in https://github.com/expressjs/express/pull/6953\r\n* @gabrieel1007 made their first contribution in https://github.com/expressjs/express/pull/6969\r\n* @Bernice55231 made their first contribution in https://github.com/expressjs/express/pull/5167\r\n* @marcosmol204 made their first contribution in https://github.com/expressjs/express/pull/6936\r\n* @sukdev24 made their first contribution in https://github.com/expressjs/express/pull/6534\r\n* @AkaHarshit made their first contribution in https://github.com/expressjs/express/pull/6903\r\n* @vinybrun made their first contribution in https://github.com/expressjs/express/pull/6274\r\n* @GroophyLifefor made their first contribution in https://github.com/expressjs/express/pull/6996\r\n* @davetashner made their first contribution in https://github.com/expressjs/express/pull/7057\r\n* @pavan-sh made their first contribution in https://github.com/expressjs/express/pull/7029\r\n* @IshitaSingh0822 made their first contribution in https://github.com/expressjs/express/pull/7037\r\n* @samtuckerdavis made their first contribution in https://github.com/expressjs/express/pull/7064\r\n* @ayushshukla1807 made their first contribution in https://github.com/expressjs/express/pull/7136\r\n* @Vansh1811 made their first contribution in https://github.com/expressjs/express/pull/7159\r\n* @opensourcezeal made their first contribution in https://github.com/expressjs/express/pull/7191\r\n* @cyphercodes made their first contribution in https://github.com/expressjs/express/pull/7305\r\n* @Nitin-Mohapatra made their first contribution in https://github.com/expressjs/express/pull/6464\r\n* @tejgokani made their first contribution in https://github.com/expressjs/express/pull/7265\r\n* @YuryShkoda made their first contribution in https://github.com/expressjs/express/pull/4893\r\n* @Mayvis made their first contribution in https://github.com/expressjs/express/pull/7390\r\n* @spellsaif made their first contribution in https://github.com/expressjs/express/pull/7406\r\n* @Kimkoungsoo made their first contribution in https://github.com/expressjs/express/pull/7426\r\n* @cuishuang made their first contribution in https://github.com/expressjs/express/pull/7459\r\n* @haimingZZ made their first contribution in https://github.com/expressjs/express/pull/7483\r\n* @whoalin1 made their first contribution in https://github.com/expressjs/express/pull/7509\r\n* @fmtappendf made their first contribution in https://github.com/expressjs/express/pull/7512\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v5.2.1...v5.3.0"
+  },
+  {
+    "tag_name": "v4.22.2",
+    "name": "v4.22.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n\r\n* fix: restore >20 array parsing for `req.query` repeated keys ([`8d09bfe6`](https://github.com/expressjs/express/commit/8d09bfe6d88983da5c3e12cfdd54782c4dc675db))\r\n  * This also unifies array-cap behavior across notations. Indexed notation (`a[0]=...`) was historically capped at qs's default `arrayLimit` of 20 even in older qs versions; after this change it also allows up to 1000 items.\r\n* deps: qs@~6.15.1\r\n* deps: body-parser@~1.20.5\r\n\r\n\r\n## New Contributors\r\n* @suuuuuuminnnnnn made their first contribution in https://github.com/expressjs/express/pull/7021\r\n* @SAY-5 made their first contribution in https://github.com/expressjs/express/pull/7181\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v4.22.1...v4.22.2"
+  },
+  {
+    "tag_name": "v5.2.1",
+    "name": "v5.2.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n\r\n> [!IMPORTANT]  \r\n> The prior release (5.2.0) included an erroneous breaking change related to the extended query parser. There is no actual security vulnerability associated with this behavior (CVE-2024-51999 has been rejected). The change has been fully reverted in this release.\r\n\r\n* Release: 5.2.1 by @UlisesGascon in https://github.com/expressjs/express/pull/6933\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v5.2.0...v5.2.1"
+  },
+  {
+    "tag_name": "v5.2.0",
+    "name": "v5.2.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## Important: Security\r\n\r\n* Security fix for [CVE-2024-51999](https://www.cve.org/CVERecord?id=CVE-2024-51999) ([GHSA-pj86-cfqh-vqx6](https://github.com/expressjs/express/security/advisories/GHSA-pj86-cfqh-vqx6))\r\n\r\n\r\n## What's Changed\r\n* build(deps): bump github/codeql-action from 3.28.11 to 3.28.13 by @dependabot[bot] in https://github.com/expressjs/express/pull/6429\r\n* Refactor: simplify `acceptsLanguages` implementation using spread operator by @Ayoub-Mabrouk in https://github.com/expressjs/express/pull/6137\r\n* increased code coverage of utils.js file by @ashish3011 in https://github.com/expressjs/express/pull/6386\r\n* chore: remove duplicate word by @dufucun in https://github.com/expressjs/express/pull/6456\r\n* build(deps): bump github/codeql-action from 3.28.13 to 3.28.16 by @dependabot[bot] in https://github.com/expressjs/express/pull/6498\r\n* build(deps): bump actions/setup-node from 4.3.0 to 4.4.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6497\r\n* build(deps): bump actions/download-artifact from 4.2.1 to 4.3.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6496\r\n* ci: add node.js 24 to test matrix by @Phillip9587 in https://github.com/expressjs/express/pull/6504\r\n* ci: update codeql config by @Phillip9587 in https://github.com/expressjs/express/pull/6488\r\n* chore: wider range for query test skip by @jonchurch in https://github.com/expressjs/express/pull/6512\r\n* chore: fix typos in test by @noritaka1166 in https://github.com/expressjs/express/pull/6535\r\n* ci: disable credential persistence for checkout actions by @mertssmnoglu in https://github.com/expressjs/express/pull/6522\r\n* ci: allow manual triggering of workflow by @shivarm in https://github.com/expressjs/express/pull/6515\r\n* test: add coverage for app.listen() variants by @kgarg1 in https://github.com/expressjs/express/pull/6476\r\n* docs: move documentation and charters to the discussions and .github … by @bjohansebas in https://github.com/expressjs/express/pull/6427\r\n* build(deps): bump github/codeql-action from 3.28.16 to 3.28.18 by @dependabot[bot] in https://github.com/expressjs/express/pull/6549\r\n* build(deps): bump ossf/scorecard-action from 2.4.1 to 2.4.2 by @dependabot[bot] in https://github.com/expressjs/express/pull/6548\r\n* chore: enforce explicit `Buffer` import and add lint rule by @shivarm in https://github.com/expressjs/express/pull/6525\r\n* chore: use node protocol for querystring by @shivarm in https://github.com/expressjs/express/pull/6520\r\n* chore: fix typo by @mountdisk in https://github.com/expressjs/express/pull/6609\r\n* build(deps): bump github/codeql-action from 3.28.18 to 3.29.2 by @dependabot[bot] in https://github.com/expressjs/express/pull/6618\r\n* add deprecation warnings for redirect arguments undefined by @bjohansebas in https://github.com/expressjs/express/pull/6405\r\n* ci: run CI when the markdown changes by @bjohansebas in https://github.com/expressjs/express/pull/6632\r\n* doc: fix CONTRIBUTING link by @jonchurch in https://github.com/expressjs/express/pull/6653\r\n* doc: update contributing guidelines and code of conduct links by @ShubhamOulkar in https://github.com/expressjs/express/pull/6601\r\n* build(deps-dev): bump morgan from 1.10.0 to 1.10.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/6679\r\n* build(deps-dev): bump cookie-session from 2.1.0 to 2.1.1 by @dependabot[bot] in https://github.com/expressjs/express/pull/6678\r\n* lint: add --fix flag to automatic fix linting issue by @shivarm in https://github.com/expressjs/express/pull/6644\r\n* chore: ignore yarn.lock file and update example by @shivarm in https://github.com/expressjs/express/pull/6588\r\n* lib: use req.socket over deprecated req.connection by @bjohansebas in https://github.com/expressjs/express/pull/6705\r\n* doc: update express app example by @shivarm in https://github.com/expressjs/express/pull/6718\r\n* build(deps): bump github/codeql-action from 3.29.2 to 3.29.5 by @dependabot[bot] in https://github.com/expressjs/express/pull/6675\r\n* Remove history.md from being packaged on publish by @sheplu in https://github.com/expressjs/express/pull/6780\r\n* build(deps): bump actions/checkout from 4.2.2 to 5.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6797\r\n* build(deps): bump github/codeql-action from 3.29.7 to 3.30.5 by @dependabot[bot] in https://github.com/expressjs/express/pull/6796\r\n* build(deps): bump ossf/scorecard-action from 2.4.2 to 2.4.3 by @dependabot[bot] in https://github.com/expressjs/express/pull/6795\r\n* build(deps): bump actions/setup-node from 4.4.0 to 5.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6794\r\n* build(deps): bump actions/download-artifact from 4.3.0 to 5.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6793\r\n* ci: add node.js 25 to test matrix by @Phillip9587 in https://github.com/expressjs/express/pull/6843\r\n* build(deps): bump actions/download-artifact from 5.0.0 to 6.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6871\r\n* build(deps): bump actions/setup-node from 5.0.0 to 6.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6870\r\n* build(deps): bump github/codeql-action from 3.30.5 to 4.31.2 by @dependabot[bot] in https://github.com/expressjs/express/pull/6869\r\n* build(deps): bump actions/upload-artifact from 4.6.2 to 5.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6868\r\n* chore: switch badges from badgen.net to shields.io by @Phillip9587 in https://github.com/expressjs/express/pull/6900\r\n* refactor: use cached slice in app.listen by @Tacit1 in https://github.com/expressjs/express/pull/6897\r\n* Nominate to @efekrskl for triage team by @bjohansebas in https://github.com/expressjs/express/pull/6888\r\n* docs: update emeritus triagers by @bjohansebas in https://github.com/expressjs/express/pull/6890\r\n* fix: upgrade body-parser to 2.2.1 to address CVE-2025-13466 by @shivarm in https://github.com/expressjs/express/pull/6922\r\n* build(deps): bump coverallsapp/github-action from 2.3.6 to 2.3.7 by @dependabot[bot] in https://github.com/expressjs/express/pull/6930\r\n* build(deps): bump github/codeql-action from 4.31.2 to 4.31.6 by @dependabot[bot] in https://github.com/expressjs/express/pull/6929\r\n* build(deps): bump actions/checkout from 5.0.0 to 6.0.0 by @dependabot[bot] in https://github.com/expressjs/express/pull/6928\r\n* Release: 5.2.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6920\r\n\r\n## New Contributors\r\n* @ashish3011 made their first contribution in https://github.com/expressjs/express/pull/6386\r\n* @dufucun made their first contribution in https://github.com/expressjs/express/pull/6456\r\n* @noritaka1166 made their first contribution in https://github.com/expressjs/express/pull/6535\r\n* @mertssmnoglu made their first contribution in https://github.com/expressjs/express/pull/6522\r\n* @shivarm made their first contribution in https://github.com/expressjs/express/pull/6515\r\n* @kgarg1 made their first contribution in https://github.com/expressjs/express/pull/6476\r\n* @mountdisk made their first contribution in https://github.com/expressjs/express/pull/6609\r\n* @ShubhamOulkar made their first contribution in https://github.com/expressjs/express/pull/6601\r\n* @sheplu made their first contribution in https://github.com/expressjs/express/pull/6780\r\n* @Tacit1 made their first contribution in https://github.com/expressjs/express/pull/6897\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v5.1.0...v5.2.0"
+  },
+  {
+    "tag_name": "v4.22.1",
+    "name": "v4.22.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n\r\n> [!IMPORTANT]  \r\n> The prior release (4.22.0) included an erroneous breaking change related to the extended query parser. There is no actual security vulnerability associated with this behavior (CVE-2024-51999 has been rejected). The change has been fully reverted in this release.\r\n\r\n* Release: 4.22.1 by @UlisesGascon in https://github.com/expressjs/express/pull/6934\r\n\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.22.0...v4.22.1"
+  },
+  {
+    "tag_name": "4.22.0",
+    "name": "4.22.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## Important: Security\r\n\r\n* Security fix for [CVE-2024-51999](https://www.cve.org/CVERecord?id=CVE-2024-51999) ([GHSA-pj86-cfqh-vqx6](https://github.com/expressjs/express/security/advisories/GHSA-pj86-cfqh-vqx6))\r\n\r\n\r\n## What's Changed\r\n* Refactor: improve readability by @sazk07 in https://github.com/expressjs/express/pull/6190\r\n* ci: add support for Node.js@23.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6080\r\n* Method functions with no path should error by @wesleytodd in https://github.com/expressjs/express/pull/5957\r\n* ci: updated github actions ci workflow by @Phillip9587 in https://github.com/expressjs/express/pull/6323\r\n* ci: reorder `npm i` steps to fix ci for older node versions by @Phillip9587 in https://github.com/expressjs/express/pull/6336\r\n* Backport: ci: add node.js 24 to test matrix by @Phillip9587 in https://github.com/expressjs/express/pull/6506\r\n* chore(4.x): wider range for query test skip by @jonchurch in https://github.com/expressjs/express/pull/6513\r\n* use tilde notation for certain dependencies by @UlisesGascon in https://github.com/expressjs/express/pull/6905\r\n* deps: qs@6.14.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6909\r\n* deps: use tilde notation for `qs` by @Phillip9587 in https://github.com/expressjs/express/pull/6919\r\n* Release: 4.22.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6921\r\n\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.21.2...4.22.0"
+  },
+  {
+    "tag_name": "v5.0.1",
+    "name": "5.0.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* remove --bail from test script by @jonchurch in https://github.com/expressjs/express/pull/5962\r\n* Nominate @bjohansebas to the triage team by @UlisesGascon in https://github.com/expressjs/express/pull/6009\r\n* Link and update captains by @blakeembrey in https://github.com/expressjs/express/pull/6013\r\n* Update `cookie` semver lock to address CVE-2024-47764 by @joshbuker in https://github.com/expressjs/express/pull/6017\r\n* Release: 5.0.1 by @UlisesGascon in https://github.com/expressjs/express/pull/6032\r\n\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v5.0.0...5.0.1"
+  },
+  {
+    "tag_name": "v5.1.0",
+    "name": "v5.1.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* Update captains by @UlisesGascon in https://github.com/expressjs/express/pull/6027\r\n* build: Node.js 23.0 by @bjohansebas in https://github.com/expressjs/express/pull/6075\r\n* Add funding field (v5) by @bjohansebas in https://github.com/expressjs/express/pull/6064\r\n* ✅ add discarded middleware test by @ctcpip in https://github.com/expressjs/express/pull/5819\r\n* update homepage link http to https by @bjohansebas in https://github.com/expressjs/express/pull/5920\r\n* Improve readme by @bjohansebas in https://github.com/expressjs/express/pull/5994\r\n* Add bjohansebas as repo captain for expressjs.com by @crandmck in https://github.com/expressjs/express/pull/6058\r\n* Remove Object.setPrototypeOf polyfill by @Phillip9587 in https://github.com/expressjs/express/pull/6081\r\n* fix(buffer): use node:buffer instead of safe-buffer by @bhavya3024 in https://github.com/expressjs/express/pull/6071\r\n* docs: Add DCO by @UlisesGascon in https://github.com/expressjs/express/pull/6048\r\n* cleanup: remove promise support check from tests by @Phillip9587 in https://github.com/expressjs/express/pull/6148\r\n* Use loop for acceptParams by @blakeembrey in https://github.com/expressjs/express/pull/6066\r\n* Improve documentation step in release process by @bjohansebas in https://github.com/expressjs/express/pull/6150\r\n* cleanup: remove unnecessary require for global Buffer by @Phillip9587 in https://github.com/expressjs/express/pull/6146\r\n* cleanup: remove AsyncLocalStorage check by @Phillip9587 in https://github.com/expressjs/express/pull/6147\r\n* update history.md for acceptParams change by @jonchurch in https://github.com/expressjs/express/pull/6177\r\n* docs: add @rxmarbles to the triage team by @UlisesGascon in https://github.com/expressjs/express/pull/6151\r\n* refactor: improve readability by @sazk07 in https://github.com/expressjs/express/pull/6173\r\n* docs: clarify the security process in the triage role by @bjohansebas in https://github.com/expressjs/express/pull/6217\r\n* chore: replace `methods` dependency with standard library by @jonkoops in https://github.com/expressjs/express/pull/6196\r\n* Remove `utils-merge` dependency - use spread syntax instead by @Phillip9587 in https://github.com/expressjs/express/pull/6091\r\n* fix(securite): fix vulnerabilities by @Abdel-Monaam-Aouini in https://github.com/expressjs/express/pull/6211\r\n* refactor: prefix built-in node module imports by @slagiewka in https://github.com/expressjs/express/pull/6236\r\n* fix: remove download size badges by @wesleytodd in https://github.com/expressjs/express/pull/6266\r\n* Remove unused `depd` dependency by @jonkoops in https://github.com/expressjs/express/pull/6197\r\n* fix: usage of `Invalid action input 'persist-credentials'` for `actions/setup-node@v4` in `ci.yml` by @hamirmahal in https://github.com/expressjs/express/pull/6256\r\n* Add support for OSSF scorecard reporting by @UlisesGascon in https://github.com/expressjs/express/pull/5431\r\n* docs: add @Phillip9587 to the triage team by @bjohansebas in https://github.com/expressjs/express/pull/6276\r\n* fix: added a missing semicolon in css styles in examples/auth by @pr4j3sh in https://github.com/expressjs/express/pull/6297\r\n* docs: include team email in the security policy by @UlisesGascon in https://github.com/expressjs/express/pull/6278\r\n* refactor: simplify `normalizeTypes` function by @Ayoub-Mabrouk in https://github.com/expressjs/express/pull/6097\r\n* ci: updated github actions ci workflow by @Phillip9587 in https://github.com/expressjs/express/pull/6314\r\n* ci: fix npm install --include typo by @Phillip9587 in https://github.com/expressjs/express/pull/6324\r\n* ci: updated scorecard actions by @Phillip9587 in https://github.com/expressjs/express/pull/6322\r\n* build(deps): use carat notation for dependency versions by @dpopp07 in https://github.com/expressjs/express/pull/6317\r\n* chore(deps): update `debug` to ^4.4.0 by @Phillip9587 in https://github.com/expressjs/express/pull/6313\r\n* docs: retroactively note 5.0.0-beta.1 api change in history file by @dpopp07 in https://github.com/expressjs/express/pull/6333\r\n* feat(deps): body-parser@^2.1.0 by @wesleytodd in https://github.com/expressjs/express/pull/6332\r\n* feat(deps): router@^2.1.0 by @wesleytodd in https://github.com/expressjs/express/pull/6331\r\n* Update repo captains by @UlisesGascon in https://github.com/expressjs/express/pull/6234\r\n* deps: upgrade nyc by @agungjati in https://github.com/expressjs/express/pull/6122\r\n* fix (deps): update deps by @wesleytodd in https://github.com/expressjs/express/pull/6337\r\n* response: add support for ETag option in res.sendFile by @juanarbol in https://github.com/expressjs/express/pull/6073\r\n* Update multiple links to use `https` instead of `http` by @Phillip9587 in https://github.com/expressjs/express/pull/6338\r\n* Extend res.links() to allow adding multiple links with the same rel #2729 by @andvea in https://github.com/expressjs/express/pull/4885\r\n* docs: update emeritus triagers by @UlisesGascon in https://github.com/expressjs/express/pull/6345\r\n* docs: update guidance for triager nominations by @bjohansebas in https://github.com/expressjs/express/pull/6349\r\n* docs: clarify guidelines for becoming a committer by @bjohansebas in https://github.com/expressjs/express/pull/6364\r\n* Nominate @dpopp07 to the triage team by @UlisesGascon in https://github.com/expressjs/express/pull/6352\r\n* fix(deps): qs@^6.14.0 by @wesleytodd in https://github.com/expressjs/express/pull/6374\r\n* Add dependabot by @UlisesGascon in https://github.com/expressjs/express/pull/5435\r\n* fix dependabot config by @bjohansebas in https://github.com/expressjs/express/pull/6392\r\n* build(deps): bump github/codeql-action from 3.24.7 to 3.28.11 by @dependabot in https://github.com/expressjs/express/pull/6398\r\n* build(deps): bump ossf/scorecard-action from 2.4.0 to 2.4.1 by @dependabot in https://github.com/expressjs/express/pull/6397\r\n* feat(deps): finalhandler@2.1.0 by @wesleytodd in https://github.com/expressjs/express/pull/6373\r\n* build(deps-dev): bump cookie-session from 2.0.0 to 2.1.0 by @dependabot in https://github.com/expressjs/express/pull/6399\r\n* deps: body-parser@^2.2.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6419\r\n* deps: type-is@^2.0.1 by @UlisesGascon in https://github.com/expressjs/express/pull/6420\r\n* deps: router@^2.2.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6417\r\n* ci: use full SHAs for github action versions by @Phillip9587 in https://github.com/expressjs/express/pull/6415\r\n* doc: remove @mertcanaltin from Triagers by @mertcanaltin in https://github.com/expressjs/express/pull/6408\r\n* deps: serve-static@^2.2.0 by @UlisesGascon in https://github.com/expressjs/express/pull/6418\r\n* 5.1.0 by @wesleytodd in https://github.com/expressjs/express/pull/6425\r\n\r\n## New Contributors\r\n* @bhavya3024 made their first contribution in https://github.com/expressjs/express/pull/6071\r\n* @jonkoops made their first contribution in https://github.com/expressjs/express/pull/6196\r\n* @Abdel-Monaam-Aouini made their first contribution in https://github.com/expressjs/express/pull/6211\r\n* @slagiewka made their first contribution in https://github.com/expressjs/express/pull/6236\r\n* @hamirmahal made their first contribution in https://github.com/expressjs/express/pull/6256\r\n* @pr4j3sh made their first contribution in https://github.com/expressjs/express/pull/6297\r\n* @Ayoub-Mabrouk made their first contribution in https://github.com/expressjs/express/pull/6097\r\n* @dpopp07 made their first contribution in https://github.com/expressjs/express/pull/6317\r\n* @agungjati made their first contribution in https://github.com/expressjs/express/pull/6122\r\n* @andvea made their first contribution in https://github.com/expressjs/express/pull/4885\r\n* @dependabot made their first contribution in https://github.com/expressjs/express/pull/6398\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/5.0.1...v5.1.0"
+  },
+  {
+    "tag_name": "4.21.2",
+    "name": "4.21.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* Add funding field (v4) by @bjohansebas in https://github.com/expressjs/express/pull/6065\r\n* deps: path-to-regexp@0.1.11 by @blakeembrey in https://github.com/expressjs/express/pull/5956\r\n* deps: bump path-to-regexp@0.1.12 by @jonchurch in https://github.com/expressjs/express/pull/6209\r\n* Release: 4.21.2 by @UlisesGascon in https://github.com/expressjs/express/pull/6094\r\n\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.21.1...4.21.2"
+  },
+  {
+    "tag_name": "4.21.1",
+    "name": "4.21.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* Backport a fix for CVE-2024-47764 to the 4.x branch by @joshbuker in https://github.com/expressjs/express/pull/6029\r\n* Release: 4.21.1 by @UlisesGascon in https://github.com/expressjs/express/pull/6031\r\n\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.21.0...4.21.1"
+  },
+  {
+    "tag_name": "4.21.0",
+    "name": "4.21.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* Deprecate `\"back\"` magic string in redirects by @blakeembrey in https://github.com/expressjs/express/pull/5935\r\n* finalhandler@1.3.1 by @wesleytodd in https://github.com/expressjs/express/pull/5954\r\n* fix(deps): serve-static@1.16.2 by @wesleytodd in https://github.com/expressjs/express/pull/5951\r\n* Upgraded dependency qs to 6.13.0 to match qs in body-parser by @agadzinski93 in https://github.com/expressjs/express/pull/5946\r\n\r\n## New Contributors\r\n* @agadzinski93 made their first contribution in https://github.com/expressjs/express/pull/5946\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.20.0...4.21.0"
+  },
+  {
+    "tag_name": "v5.0.0",
+    "name": "5.0.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "# Express v5.0.0 \r\n\r\n🎉 **Express v5 is finally here!** 🎉\r\n\r\nAfter years of development, the long-awaited Express v5 has been officially released. This version focuses on simplifying the codebase, improving security, and dropping support for older Node.js versions to enable better performance and maintainability.\r\n\r\nFor detailed information, please check out the official [Express v5 release blog post](https://expressjs.com/2024/10/15/v5-release.html).\r\n\r\n## Most relevant details\r\n\r\n### Major Changes in v5\r\n\r\n- **Node.js version support**: Dropped support for Node.js versions before v18.\r\n- **Routing changes**: Updated to `path-to-regexp@8.x`, removing sub-expression regex patterns for security reasons (ReDoS mitigation).\r\n- **Promise support**: Middleware can now return rejected promises, caught by the router as errors.\r\n- **`body-parser` changes**: Several improvements including the ability to customize `urlencoded` body depth and defaulting `extended` to `false`.\r\n- **Deprecated API methods removed**: Removed old, deprecated API method signatures from Express v3/v4.\r\n\r\nFor a complete list of breaking changes and API deprecations, see the [migration guide](https://expressjs.com/en/guide/migrating-5.html).\r\n\r\n### Security Updates\r\n\r\nThis release includes important security fixes, including improvements to prevent ReDoS attacks and mitigation for CVE-2024-45590. Full details can be found in the [security release notes](https://expressjs.com/2024/09/29/security-releases.html).\r\n\r\n### Migration\r\n\r\nBe sure to check out our [migration guide](https://expressjs.com/en/guide/migrating-5.html) for instructions on how to update your applications from Express v4 to v5.\r\n\r\n### Security Guidance\r\n\r\nFor best practices, we recommend reviewing the [Threat Model](https://github.com/expressjs/security-wg/blob/main/docs/ThreatModel.md) which outlines Express' approach to securing your applications, including tips for user input validation and other critical aspects.\r\n\r\n\r\n## What's Changed\r\n* 4.19.2 Staging by @wesleytodd in https://github.com/expressjs/express/pull/5561\r\n* remove duplicate location test for data uri by @wesleytodd in https://github.com/expressjs/express/pull/5562\r\n* feat: document beta releases expectations by @marco-ippolito in https://github.com/expressjs/express/pull/5565\r\n* Cut down on duplicated CI runs by @jonchurch in https://github.com/expressjs/express/pull/5564\r\n* Add a Threat Model by @UlisesGascon in https://github.com/expressjs/express/pull/5526\r\n* Assign captain of encodeurl by @blakeembrey in https://github.com/expressjs/express/pull/5579\r\n* Nominate jonchurch as repo captain for `http-errors`, `expressjs.com`, `morgan`, `cors`, `body-parser` by @jonchurch in https://github.com/expressjs/express/pull/5587\r\n* docs: update Security.md by @inigomarquinez in https://github.com/expressjs/express/pull/5590\r\n* docs: update triage nomination policy by @UlisesGascon in https://github.com/expressjs/express/pull/5600\r\n* Add CodeQL (SAST) by @UlisesGascon in https://github.com/expressjs/express/pull/5433\r\n* docs: add UlisesGascon as triage initiative captain by @UlisesGascon in https://github.com/expressjs/express/pull/5605\r\n* Use object with null prototype for various app properties by @EvanHahn in https://github.com/expressjs/express/pull/4861\r\n* deps: encodeurl@~2.0.0 by @blakeembrey in https://github.com/expressjs/express/pull/5569\r\n* skip QUERY method test by @jonchurch in https://github.com/expressjs/express/pull/5628\r\n* ignore ETAG query test on 21 and 22, reuse skip util by @jonchurch in https://github.com/expressjs/express/pull/5639\r\n* add support Node.js@22 in the CI by @mertcanaltin in https://github.com/expressjs/express/pull/5627\r\n* doc: add table of contents, tc/triager lists to readme by @mertcanaltin in https://github.com/expressjs/express/pull/5619\r\n* List and sort all projects, add captains by @blakeembrey in https://github.com/expressjs/express/pull/5653\r\n* Call callback once on listen error by @wesleytodd in https://github.com/expressjs/express/pull/3216\r\n* docs: add @UlisesGascon as captain for cookie-parser by @UlisesGascon in https://github.com/expressjs/express/pull/5666\r\n* ✨ bring back query tests for node 21 by @ctcpip in https://github.com/expressjs/express/pull/5690\r\n* [v4] Deprecate `res.clearCookie` accepting `options.maxAge` and `options.expires` by @jonchurch in https://github.com/expressjs/express/pull/5672\r\n* skip QUERY tests for Node 21 only, still not supported by @jonchurch in https://github.com/expressjs/express/pull/5695\r\n* 📝 update people, add ctcpip to TC by @ctcpip in https://github.com/expressjs/express/pull/5683\r\n* remove minor version pinning from ci by @jonchurch in https://github.com/expressjs/express/pull/5722\r\n* Fix link variable use in attribution section of CODE OF CONDUCT by @IamLizu in https://github.com/expressjs/express/pull/5762\r\n* Replace Appveyor windows testing with GHA by @jonchurch in https://github.com/expressjs/express/pull/5599\r\n* Add OSSF Scorecard badge by @UlisesGascon in https://github.com/expressjs/express/pull/5436\r\n* Throw on invalid status codes by @jonchurch in https://github.com/expressjs/express/pull/4212\r\n* Use Array.flat instead of array-flatten by @almic in https://github.com/expressjs/express/pull/5677\r\n* Adopt Node@18 as the minimum supported version by @UlisesGascon in https://github.com/expressjs/express/pull/5803\r\n* Ignore `expires` and `maxAge` in `res.clearCookie()` by @jonchurch in https://github.com/expressjs/express/pull/5792\r\n* send@1.0.0 by @wesleytodd in https://github.com/expressjs/express/pull/5786\r\n* chore: upgrade `debug` dep from 3.10 to 4.3.6 by @carpasse in https://github.com/expressjs/express/pull/5829\r\n* refactor: replace 'path-is-absolute' dep with node:path isAbsolute method by @carpasse in https://github.com/expressjs/express/pull/5830\r\n* update scorecard link by @bjohansebas in https://github.com/expressjs/express/pull/5814\r\n* Nominate @IamLizu to the triage team by @UlisesGascon in https://github.com/expressjs/express/pull/5836\r\n* deps: path-to-regexp@0.1.8 by @blakeembrey in https://github.com/expressjs/express/pull/5603\r\n* docs: specify new instructions for `question` and `discuss` by @IamLizu in https://github.com/expressjs/express/pull/5835\r\n* 5.x: Upgrading `merge-descriptors` with allowing minors by @RobinTail in https://github.com/expressjs/express/pull/5782\r\n* 4.x: Upgrade `merge-descriptors` dependency by @RobinTail in https://github.com/expressjs/express/pull/5781\r\n* WIP: serve-static@2 by @wesleytodd in https://github.com/expressjs/express/pull/5790\r\n* chore: upgrade qs dp from 6.11.0 to 6.13.0 by @carpasse in https://github.com/expressjs/express/pull/5847\r\n* Upgrade cookie signature by @IamLizu in https://github.com/expressjs/express/pull/5833\r\n* accepts@2 by @wesleytodd in https://github.com/expressjs/express/pull/5881\r\n* mime-types@3 by @wesleytodd in https://github.com/expressjs/express/pull/5882\r\n* type-is@^2.0.0 by @wesleytodd in https://github.com/expressjs/express/pull/5883\r\n* content-disposition@^1.0.0 by @wesleytodd in https://github.com/expressjs/express/pull/5884\r\n* fix(deps): finalhandler@^2.0.0 by @wesleytodd in https://github.com/expressjs/express/pull/5899\r\n* path-to-regexp@0.1.10 by @blakeembrey in https://github.com/expressjs/express/pull/5902\r\n* update to `fresh@^2.0.0` by @jonchurch in https://github.com/expressjs/express/pull/5916\r\n* router@^2.0.0 by @wesleytodd in https://github.com/expressjs/express/pull/5885\r\n* Adopt Node@18 as the minimum supported version by @UlisesGascon in https://github.com/expressjs/express/pull/5595\r\n* master -> 5.0 by @ctcpip in https://github.com/expressjs/express/pull/5785\r\n* 🔧 update CI, remove unsupported versions, clean up by @ctcpip in https://github.com/expressjs/express/pull/5931\r\n* Delete `back` as a magic string by @blakeembrey in https://github.com/expressjs/express/pull/5933\r\n* Release 5.0 by @dougwilson in https://github.com/expressjs/express/pull/2237\r\n\r\n## New Contributors\r\n* @marco-ippolito made their first contribution in https://github.com/expressjs/express/pull/5565\r\n* @inigomarquinez made their first contribution in https://github.com/expressjs/express/pull/5590\r\n* @mertcanaltin made their first contribution in https://github.com/expressjs/express/pull/5627\r\n* @ctcpip made their first contribution in https://github.com/expressjs/express/pull/5690\r\n* @IamLizu made their first contribution in https://github.com/expressjs/express/pull/5762\r\n* @almic made their first contribution in https://github.com/expressjs/express/pull/5677\r\n* @carpasse made their first contribution in https://github.com/expressjs/express/pull/5829\r\n* @bjohansebas made their first contribution in https://github.com/expressjs/express/pull/5814\r\n* @RobinTail made their first contribution in https://github.com/expressjs/express/pull/5782\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v5.0.0-beta.3...v5.0.0\r\n"
+  },
+  {
+    "tag_name": "4.20.0",
+    "name": "4.20.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n\r\n### Important\r\n\r\n* IMPORTANT: The default `depth` level for parsing URL-encoded data is now `32` (previously was `Infinity`)\r\n* Remove link renderization in html while using `res.redirect`\r\n\r\n### Other Changes\r\n* 4.19.2 Staging by @wesleytodd in https://github.com/expressjs/express/pull/5561\r\n* remove duplicate location test for data uri by @wesleytodd in https://github.com/expressjs/express/pull/5562\r\n* feat: document beta releases expectations by @marco-ippolito in https://github.com/expressjs/express/pull/5565\r\n* Cut down on duplicated CI runs by @jonchurch in https://github.com/expressjs/express/pull/5564\r\n* Add a Threat Model by @UlisesGascon in https://github.com/expressjs/express/pull/5526\r\n* Assign captain of encodeurl by @blakeembrey in https://github.com/expressjs/express/pull/5579\r\n* Nominate jonchurch as repo captain for `http-errors`, `expressjs.com`, `morgan`, `cors`, `body-parser` by @jonchurch in https://github.com/expressjs/express/pull/5587\r\n* docs: update Security.md by @inigomarquinez in https://github.com/expressjs/express/pull/5590\r\n* docs: update triage nomination policy by @UlisesGascon in https://github.com/expressjs/express/pull/5600\r\n* Add CodeQL (SAST) by @UlisesGascon in https://github.com/expressjs/express/pull/5433\r\n* docs: add UlisesGascon as triage initiative captain by @UlisesGascon in https://github.com/expressjs/express/pull/5605\r\n* deps: encodeurl@~2.0.0 by @blakeembrey in https://github.com/expressjs/express/pull/5569\r\n* skip QUERY method test by @jonchurch in https://github.com/expressjs/express/pull/5628\r\n* ignore ETAG query test on 21 and 22, reuse skip util by @jonchurch in https://github.com/expressjs/express/pull/5639\r\n* add support Node.js@22 in the CI by @mertcanaltin in https://github.com/expressjs/express/pull/5627\r\n* doc: add table of contents, tc/triager lists to readme by @mertcanaltin in https://github.com/expressjs/express/pull/5619\r\n* List and sort all projects, add captains by @blakeembrey in https://github.com/expressjs/express/pull/5653\r\n* docs: add @UlisesGascon as captain for cookie-parser by @UlisesGascon in https://github.com/expressjs/express/pull/5666\r\n* ✨ bring back query tests for node 21 by @ctcpip in https://github.com/expressjs/express/pull/5690\r\n* [v4] Deprecate `res.clearCookie` accepting `options.maxAge` and `options.expires` by @jonchurch in https://github.com/expressjs/express/pull/5672\r\n* skip QUERY tests for Node 21 only, still not supported by @jonchurch in https://github.com/expressjs/express/pull/5695\r\n* 📝 update people, add ctcpip to TC by @ctcpip in https://github.com/expressjs/express/pull/5683\r\n* remove minor version pinning from ci by @jonchurch in https://github.com/expressjs/express/pull/5722\r\n* Fix link variable use in attribution section of CODE OF CONDUCT by @IamLizu in https://github.com/expressjs/express/pull/5762\r\n* Replace Appveyor windows testing with GHA by @jonchurch in https://github.com/expressjs/express/pull/5599\r\n* Add OSSF Scorecard badge by @UlisesGascon in https://github.com/expressjs/express/pull/5436\r\n* update scorecard link by @bjohansebas in https://github.com/expressjs/express/pull/5814\r\n* Nominate @IamLizu to the triage team by @UlisesGascon in https://github.com/expressjs/express/pull/5836\r\n* deps: path-to-regexp@0.1.8 by @blakeembrey in https://github.com/expressjs/express/pull/5603\r\n* docs: specify new instructions for `question` and `discuss` by @IamLizu in https://github.com/expressjs/express/pull/5835\r\n* 4.x: Upgrade `merge-descriptors` dependency by @RobinTail in https://github.com/expressjs/express/pull/5781\r\n* path-to-regexp@0.1.10 by @blakeembrey in https://github.com/expressjs/express/pull/5902\r\n\r\n## New Contributors\r\n* @marco-ippolito made their first contribution in https://github.com/expressjs/express/pull/5565\r\n* @inigomarquinez made their first contribution in https://github.com/expressjs/express/pull/5590\r\n* @mertcanaltin made their first contribution in https://github.com/expressjs/express/pull/5627\r\n* @ctcpip made their first contribution in https://github.com/expressjs/express/pull/5690\r\n* @bjohansebas made their first contribution in https://github.com/expressjs/express/pull/5814\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.19.1...4.20.0"
+  },
+  {
+    "tag_name": "v5.0.0-beta.3",
+    "name": "v5.0.0-beta.3",
+    "draft": false,
+    "prerelease": true,
+    "body": "**Full Changelog**: https://github.com/expressjs/express/compare/5.0.0-beta.2...v5.0.0-beta.3"
+  },
+  {
+    "tag_name": "4.19.2",
+    "name": "4.19.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* [Improved fix for open redirect allow list bypass](https://github.com/expressjs/express/commit/0b746953c4bd8e377123527db11f9cd866e39f94)\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.19.1...4.19.2"
+  },
+  {
+    "tag_name": "5.0.0-beta.2",
+    "name": "5.0.0-beta.2",
+    "draft": false,
+    "prerelease": true,
+    "body": "## What's Changed\r\n* lib: fix typo ocurred -> occurred by @caioagiani in https://github.com/expressjs/express/pull/4805\r\n* examples: defend from privilege elevation by @KoyamaSohei in https://github.com/expressjs/express/pull/4120\r\n* replace \"replaces\" with \"replacer\" in jsdoc by @apeltop in https://github.com/expressjs/express/pull/4843\r\n* Add install size badge to README by @styfle in https://github.com/expressjs/express/pull/3710\r\n* Replace deprecated String.prototype.substr() by @CommanderRoot in https://github.com/expressjs/express/pull/4860\r\n* fix: remove deprecated html attribute by @Hashen110 in https://github.com/expressjs/express/pull/4866\r\n* fix: parameter index is not described in JSDoc by @Hashen110 in https://github.com/expressjs/express/pull/4867\r\n* fix: continue is unnecessary as the last statement in a loop by @Hashen110 in https://github.com/expressjs/express/pull/4868\r\n* Deprecate non integer status codes in v4 by @jonchurch in https://github.com/expressjs/express/pull/4223\r\n* Add root support in res.download() by @mmito in https://github.com/expressjs/express/pull/4855\r\n* res.format(): call default using `obj` as the context by @shesek in https://github.com/expressjs/express/pull/3587\r\n* Feature/4171 depd by @UlisesGascon in https://github.com/expressjs/express/pull/4174\r\n* Validate `maxAge` appropriateness before use by @cjbarth in https://github.com/expressjs/express/pull/3936\r\n* deps: statuses@2.0.1 by @3imed-jaberi in https://github.com/expressjs/express/pull/4336\r\n* test: fix typo by @Hashen110 in https://github.com/expressjs/express/pull/4882\r\n* docs: fix typo: http -> HTTP by @ghousemohamed in https://github.com/expressjs/express/pull/4872\r\n* Update Security.md by @netcode in https://github.com/expressjs/express/pull/4890\r\n* examples: add missing associated labels by @Hashen110 in https://github.com/expressjs/express/pull/4884\r\n* Increase timeout for mocha to 7500 by @grisu48 in https://github.com/expressjs/express/pull/4887\r\n* Release 4.18 by @dougwilson in https://github.com/expressjs/express/pull/4287\r\n* Expanding the benchmark. by @denizy97 in https://github.com/expressjs/express/pull/4880\r\n* examples: remove unused params by @alxdrg in https://github.com/expressjs/express/pull/4914\r\n* Grammatically updated the express documentation for better comprehension by @REALSTEVEIG in https://github.com/expressjs/express/pull/4926\r\n* Freenode is dead/dying by @theabhinavdas in https://github.com/expressjs/express/pull/5013\r\n* Use https: protocol instead of deprecated git: protocol by @vcsjones in https://github.com/expressjs/express/pull/5032\r\n* build: Node.js@16.18 and Node.js@18.12 by @abenhamdine in https://github.com/expressjs/express/pull/5034\r\n* ci: update actions/checkout to v3 by @armujahid in https://github.com/expressjs/express/pull/5027\r\n* test: remove unused function arguments in params by @raksbisht in https://github.com/expressjs/express/pull/5124\r\n* Remove unused originalIndex from acceptParams by @raksbisht in https://github.com/expressjs/express/pull/5119\r\n* Fixed typos by @raksbisht in https://github.com/expressjs/express/pull/5117\r\n* examples: remove unused params by @raksbisht in https://github.com/expressjs/express/pull/5113\r\n* fix: parameter str is not described in JSDoc by @raksbisht in https://github.com/expressjs/express/pull/5130\r\n* fix: typos in History.md by @raksbisht in https://github.com/expressjs/express/pull/5131\r\n* build : add Node.js@19.7 by @abenhamdine in https://github.com/expressjs/express/pull/5028\r\n* test: remove unused function arguments in params by @raksbisht in https://github.com/expressjs/express/pull/5137\r\n* use random port in test so it won't fail on already listening by @rluvaton in https://github.com/expressjs/express/pull/5162\r\n* tests: use cb() instead of done() by @kristof-low in https://github.com/expressjs/express/pull/5233\r\n* examples: remove multipart example by @riddlew in https://github.com/expressjs/express/pull/5195\r\n* Update support Node.js@18 in the CI  by @UlisesGascon in https://github.com/expressjs/express/pull/5490\r\n* Fix favicon-related bug in cookie-sessions example by @DmytroKondrashov in https://github.com/expressjs/express/pull/5414\r\n* Release 4.18.3 by @UlisesGascon in https://github.com/expressjs/express/pull/5505\r\n* fix typo in release date by @UlisesGascon in https://github.com/expressjs/express/pull/5527\r\n* docs: nominating @wesleytodd to be project captian by @wesleytodd in https://github.com/expressjs/express/pull/5511\r\n* docs: loosen TC activity rules by @wesleytodd in https://github.com/expressjs/express/pull/5510\r\n* Add note on how to update docs for new release by @crandmck in https://github.com/expressjs/express/pull/5541\r\n* Release 4.19.0 by @wesleytodd in https://github.com/expressjs/express/pull/5551\r\n* Fix ci after location patch by @wesleytodd in https://github.com/expressjs/express/pull/5552\r\n* fixed un-edited version in history.md for 4.19.0 by @wesleytodd in https://github.com/expressjs/express/pull/5556\r\n\r\n## New Contributors\r\n* @caioagiani made their first contribution in https://github.com/expressjs/express/pull/4805\r\n* @apeltop made their first contribution in https://github.com/expressjs/express/pull/4843\r\n* @styfle made their first contribution in https://github.com/expressjs/express/pull/3710\r\n* @CommanderRoot made their first contribution in https://github.com/expressjs/express/pull/4860\r\n* @Hashen110 made their first contribution in https://github.com/expressjs/express/pull/4866\r\n* @mmito made their first contribution in https://github.com/expressjs/express/pull/4855\r\n* @UlisesGascon made their first contribution in https://github.com/expressjs/express/pull/4174\r\n* @cjbarth made their first contribution in https://github.com/expressjs/express/pull/3936\r\n* @ghousemohamed made their first contribution in https://github.com/expressjs/express/pull/4872\r\n* @netcode made their first contribution in https://github.com/expressjs/express/pull/4890\r\n* @grisu48 made their first contribution in https://github.com/expressjs/express/pull/4887\r\n* @denizy97 made their first contribution in https://github.com/expressjs/express/pull/4880\r\n* @alxdrg made their first contribution in https://github.com/expressjs/express/pull/4914\r\n* @REALSTEVEIG made their first contribution in https://github.com/expressjs/express/pull/4926\r\n* @theabhinavdas made their first contribution in https://github.com/expressjs/express/pull/5013\r\n* @vcsjones made their first contribution in https://github.com/expressjs/express/pull/5032\r\n* @abenhamdine made their first contribution in https://github.com/expressjs/express/pull/5034\r\n* @armujahid made their first contribution in https://github.com/expressjs/express/pull/5027\r\n* @raksbisht made their first contribution in https://github.com/expressjs/express/pull/5124\r\n* @rluvaton made their first contribution in https://github.com/expressjs/express/pull/5162\r\n* @kristof-low made their first contribution in https://github.com/expressjs/express/pull/5233\r\n* @riddlew made their first contribution in https://github.com/expressjs/express/pull/5195\r\n* @DmytroKondrashov made their first contribution in https://github.com/expressjs/express/pull/5414\r\n* @crandmck made their first contribution in https://github.com/expressjs/express/pull/5541\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/v5.0.0-beta.1...5.0.0-beta.2"
+  },
+  {
+    "tag_name": "4.19.1",
+    "name": "4.19.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n\r\n* Fix ci after location patch by @wesleytodd in https://github.com/expressjs/express/pull/5552\r\n* fixed un-edited version in history.md for 4.19.0 by @wesleytodd in https://github.com/expressjs/express/pull/5556\r\n\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.19.0...4.19.1"
+  },
+  {
+    "tag_name": "4.19.0",
+    "name": "4.19.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "## What's Changed\r\n* fix typo in release date by @UlisesGascon in https://github.com/expressjs/express/pull/5527\r\n* docs: nominating @wesleytodd to be project captian by @wesleytodd in https://github.com/expressjs/express/pull/5511\r\n* docs: loosen TC activity rules by @wesleytodd in https://github.com/expressjs/express/pull/5510\r\n* Add note on how to update docs for new release by @crandmck in https://github.com/expressjs/express/pull/5541\r\n* [Prevent open redirect allow list bypass due to encodeurl](https://github.com/expressjs/express/pull/5551/commits/660ccf5fa33dd0baab069e5c8ddd9ffe7d8bbff1)\r\n* Release 4.19.0 by @wesleytodd in https://github.com/expressjs/express/pull/5551\r\n\r\n## New Contributors\r\n* @crandmck made their first contribution in https://github.com/expressjs/express/pull/5541\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.18.3...4.19.0"
+  },
+  {
+    "tag_name": "4.18.3",
+    "name": "4.18.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "## Main Changes\r\n\r\n  * Fix routing requests without method\r\n  * deps: body-parser@1.20.2\r\n    - Fix strict json error message on Node.js 19+\r\n    - deps: content-type@~1.0.5\r\n    - deps: raw-body@2.5.2\r\n\r\n## Other Changes\r\n* Use https: protocol instead of deprecated git: protocol by @vcsjones in https://github.com/expressjs/express/pull/5032\r\n* build: Node.js@16.18 and Node.js@18.12 by @abenhamdine in https://github.com/expressjs/express/pull/5034\r\n* ci: update actions/checkout to v3 by @armujahid in https://github.com/expressjs/express/pull/5027\r\n* test: remove unused function arguments in params by @raksbisht in https://github.com/expressjs/express/pull/5124\r\n* Remove unused originalIndex from acceptParams by @raksbisht in https://github.com/expressjs/express/pull/5119\r\n* Fixed typos by @raksbisht in https://github.com/expressjs/express/pull/5117\r\n* examples: remove unused params by @raksbisht in https://github.com/expressjs/express/pull/5113\r\n* fix: parameter str is not described in JSDoc by @raksbisht in https://github.com/expressjs/express/pull/5130\r\n* fix: typos in History.md by @raksbisht in https://github.com/expressjs/express/pull/5131\r\n* build : add Node.js@19.7 by @abenhamdine in https://github.com/expressjs/express/pull/5028\r\n* test: remove unused function arguments in params by @raksbisht in https://github.com/expressjs/express/pull/5137\r\n* use random port in test so it won't fail on already listening by @rluvaton in https://github.com/expressjs/express/pull/5162\r\n* tests: use cb() instead of done() by @kristof-low in https://github.com/expressjs/express/pull/5233\r\n* examples: remove multipart example by @riddlew in https://github.com/expressjs/express/pull/5195\r\n* Update support Node.js@18 in the CI  by @UlisesGascon in https://github.com/expressjs/express/pull/5490\r\n* Fix favicon-related bug in cookie-sessions example by @DmytroKondrashov in https://github.com/expressjs/express/pull/5414\r\n* Release 4.18.3 by @UlisesGascon in https://github.com/expressjs/express/pull/5505\r\n\r\n## New Contributors\r\n* @vcsjones made their first contribution in https://github.com/expressjs/express/pull/5032\r\n* @abenhamdine made their first contribution in https://github.com/expressjs/express/pull/5034\r\n* @armujahid made their first contribution in https://github.com/expressjs/express/pull/5027\r\n* @raksbisht made their first contribution in https://github.com/expressjs/express/pull/5124\r\n* @rluvaton made their first contribution in https://github.com/expressjs/express/pull/5162\r\n* @kristof-low made their first contribution in https://github.com/expressjs/express/pull/5233\r\n* @riddlew made their first contribution in https://github.com/expressjs/express/pull/5195\r\n* @DmytroKondrashov made their first contribution in https://github.com/expressjs/express/pull/5414\r\n\r\n**Full Changelog**: https://github.com/expressjs/express/compare/4.18.2...4.18.3"
+  },
+  {
+    "tag_name": "4.18.2",
+    "name": "4.18.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Fix regression routing a large stack in a single route\r\n  * deps: body-parser@1.20.1\r\n    - deps: qs@6.11.0\r\n    - perf: remove unnecessary object clone\r\n  * deps: qs@6.11.0"
+  },
+  {
+    "tag_name": "4.18.1",
+    "name": "4.18.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Fix hanging on large stack of sync routes"
+  },
+  {
+    "tag_name": "4.18.0",
+    "name": "4.18.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Add \"root\" option to `res.download`\r\n  * Allow `options` without `filename` in `res.download`\r\n  * Deprecate string and non-integer arguments to `res.status`\r\n  * Fix behavior of `null`/`undefined` as `maxAge` in `res.cookie`\r\n  * Fix handling very large stacks of sync middleware\r\n  * Ignore `Object.prototype` values in settings through `app.set`/`app.get`\r\n  * Invoke `default` with same arguments as types in `res.format`\r\n  * Support proper 205 responses using `res.send`\r\n  * Use `http-errors` for `res.format` error\r\n  * deps: body-parser@1.20.0\r\n    - Fix error message for json parse whitespace in `strict`\r\n    - Fix internal error when inflated body exceeds limit\r\n    - Prevent loss of async hooks context\r\n    - Prevent hanging when request already read\r\n    - deps: depd@2.0.0\r\n    - deps: http-errors@2.0.0\r\n    - deps: on-finished@2.4.1\r\n    - deps: qs@6.10.3\r\n    - deps: raw-body@2.5.1\r\n  * deps: cookie@0.5.0\r\n    - Add `priority` option\r\n    - Fix `expires` option to reject invalid dates\r\n  * deps: depd@2.0.0\r\n    - Replace internal `eval` usage with `Function` constructor\r\n    - Use instance methods on `process` to check for listeners\r\n  * deps: finalhandler@1.2.0\r\n    - Remove set content headers that break response\r\n    - deps: on-finished@2.4.1\r\n    - deps: statuses@2.0.1\r\n  * deps: on-finished@2.4.1\r\n    - Prevent loss of async hooks context\r\n  * deps: qs@6.10.3\r\n  * deps: send@0.18.0\r\n    - Fix emitted 416 error missing headers property\r\n    - Limit the headers removed for 304 response\r\n    - deps: depd@2.0.0\r\n    - deps: destroy@1.2.0\r\n    - deps: http-errors@2.0.0\r\n    - deps: on-finished@2.4.1\r\n    - deps: statuses@2.0.1\r\n  * deps: serve-static@1.15.0\r\n    - deps: send@0.18.0\r\n  * deps: statuses@2.0.1\r\n    - Remove code 306\r\n    - Rename `425 Unordered Collection` to standard `425 Too Early`\r\n"
+  },
+  {
+    "tag_name": "4.17.3",
+    "name": "4.17.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: accepts@~1.3.8\r\n    - deps: mime-types@~2.1.34\r\n    - deps: negotiator@0.6.3\r\n  * deps: body-parser@1.19.2\r\n    - deps: bytes@3.1.2\r\n    - deps: qs@6.9.7\r\n    - deps: raw-body@2.4.3\r\n  * deps: cookie@0.4.2\r\n  * deps: qs@6.9.7\r\n    * Fix handling of `__proto__` keys\r\n  * pref: remove unnecessary regexp for trust proxy"
+  },
+  {
+    "tag_name": "v5.0.0-beta.1",
+    "name": "5.0.0-beta.1",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the first Express 5.0 beta release, based off 4.17.2 and includes\r\nchanges from 5.0.0-alpha.8.\r\n\r\n  * change:\r\n    - Default \"query parser\" setting to `'simple'`\r\n    - Requires Node.js 4+\r\n    - Use `mime-types` for file to content type mapping\r\n  * deps: array-flatten@3.0.0\r\n  * deps: body-parser@2.0.0-beta.1\r\n    - `req.body` is no longer always initialized to `{}`\r\n    - `urlencoded` parser now defaults `extended` to `false`\r\n    - Use `on-finished` to determine when body read\r\n  * deps: router@2.0.0-beta.1\r\n    - Add new `?`, `*`, and `+` parameter modifiers\r\n    - Internalize private `router.process_params` method\r\n    - Matching group expressions are only RegExp syntax\r\n    - Named matching groups no longer available by position in `req.params`\r\n    - Regular expressions can only be used in a matching group\r\n    - Remove `debug` dependency\r\n    - Special `*` path segment behavior removed\r\n    - deps: array-flatten@3.0.0\r\n    - deps: parseurl@~1.3.3\r\n    - deps: path-to-regexp@3.2.0\r\n    - deps: setprototypeof@1.2.0\r\n  * deps: send@1.0.0-beta.1\r\n    - Change `dotfiles` option default to `'ignore'`\r\n    - Remove `hidden` option; use `dotfiles` option instead\r\n    - Use `mime-types` for file to content type mapping\r\n    - deps: debug@3.1.0\r\n  * deps: serve-static@2.0.0-beta.1\r\n    - Change `dotfiles` option default to `'ignore'`\r\n    - Remove `hidden` option; use `dotfiles` option instead\r\n    - Use `mime-types` for file to content type mapping\r\n    - deps: send@1.0.0-beta.1"
+  },
+  {
+    "tag_name": "4.17.2",
+    "name": "4.17.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Fix handling of `undefined` in `res.jsonp`\r\n  * Fix handling of `undefined` when `\"json escape\"` is enabled\r\n  * Fix incorrect middleware execution with unanchored `RegExp`s\r\n  * Fix `res.jsonp(obj, status)` deprecation message\r\n  * Fix typo in `res.is` JSDoc\r\n  * deps: body-parser@1.19.1\r\n    - deps: bytes@3.1.1\r\n    - deps: http-errors@1.8.1\r\n    - deps: qs@6.9.6\r\n    - deps: raw-body@2.4.2\r\n    - deps: safe-buffer@5.2.1\r\n    - deps: type-is@~1.6.18\r\n  * deps: content-disposition@0.5.4\r\n    - deps: safe-buffer@5.2.1\r\n  * deps: cookie@0.4.1\r\n    - Fix `maxAge` option to reject invalid values\r\n  * deps: proxy-addr@~2.0.7\r\n    - Use `req.socket` over deprecated `req.connection`\r\n    - deps: forwarded@0.2.0\r\n    - deps: ipaddr.js@1.9.1\r\n  * deps: qs@6.9.6\r\n  * deps: safe-buffer@5.2.1\r\n  * deps: send@0.17.2\r\n    - deps: http-errors@1.8.1\r\n    - deps: ms@2.1.3\r\n    - pref: ignore empty http tokens\r\n  * deps: serve-static@1.14.2\r\n    - deps: send@0.17.2\r\n  * deps: setprototypeof@1.2.0"
+  },
+  {
+    "tag_name": "5.0.0-alpha.8",
+    "name": "5.0.0-alpha.8",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the sixth Express 5.0 alpha release, based off 4.17.1 and includes\r\nchanges from 5.0.0-alpha.7.\r\n"
+  },
+  {
+    "tag_name": "4.17.1",
+    "name": "4.17.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Revert \"Improve error message for `null`/`undefined` to `res.status`\"\r\n"
+  },
+  {
+    "tag_name": "4.17.0",
+    "name": "4.17.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Add `express.raw` to parse bodies into `Buffer`\r\n  * Add `express.text` to parse bodies into string\r\n  * Improve error message for non-strings to `res.sendFile`\r\n  * Improve error message for `null`/`undefined` to `res.status`\r\n  * Support multiple hosts in `X-Forwarded-Host`\r\n  * deps: accepts@~1.3.7\r\n  * deps: body-parser@1.19.0\r\n    - Add encoding MIK\r\n    - Add petabyte (`pb`) support\r\n    - Fix parsing array brackets after index\r\n    - deps: bytes@3.1.0\r\n    - deps: http-errors@1.7.2\r\n    - deps: iconv-lite@0.4.24\r\n    - deps: qs@6.7.0\r\n    - deps: raw-body@2.4.0\r\n    - deps: type-is@~1.6.17\r\n  * deps: content-disposition@0.5.3\r\n  * deps: cookie@0.4.0\r\n    - Add `SameSite=None` support\r\n  * deps: finalhandler@~1.1.2\r\n    - Set stricter `Content-Security-Policy` header\r\n    - deps: parseurl@~1.3.3\r\n    - deps: statuses@~1.5.0\r\n  * deps: parseurl@~1.3.3\r\n  * deps: proxy-addr@~2.0.5\r\n    - deps: ipaddr.js@1.9.0\r\n  * deps: qs@6.7.0\r\n    - Fix parsing array brackets after index\r\n  * deps: range-parser@~1.2.1\r\n  * deps: send@0.17.1\r\n    - Set stricter CSP header in redirect & error responses\r\n    - deps: http-errors@~1.7.2\r\n    - deps: mime@1.6.0\r\n    - deps: ms@2.1.1\r\n    - deps: range-parser@~1.2.1\r\n    - deps: statuses@~1.5.0\r\n    - perf: remove redundant `path.normalize` call\r\n  * deps: serve-static@1.14.1\r\n    - Set stricter CSP header in redirect response\r\n    - deps: parseurl@~1.3.3\r\n    - deps: send@0.17.1\r\n  * deps: setprototypeof@1.1.1\r\n  * deps: statuses@~1.5.0\r\n    - Add `103 Early Hints`\r\n  * deps: type-is@~1.6.18\r\n    - deps: mime-types@~2.1.24\r\n    - perf: prevent internal `throw` on invalid type\r\n"
+  },
+  {
+    "tag_name": "5.0.0-alpha.7",
+    "name": "5.0.0-alpha.7",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the seventh Express 5.0 alpha release, based off 4.16.4 and includes\r\nchanges from 5.0.0-alpha.6.\r\n\r\nThe major change with this alpha is the basic support for returned, rejected\r\nPromises in the router.\r\n\r\n  * remove:\r\n    - `path-to-regexp` dependency\r\n  * deps: debug@3.1.0\r\n    - Add `DEBUG_HIDE_DATE` environment variable\r\n    - Change timer to per-namespace instead of global\r\n    - Change non-TTY date format\r\n    - Remove `DEBUG_FD` environment variable support\r\n    - Support 256 namespace colors\r\n  * deps: router@2.0.0-alpha.1\r\n    - Add basic support for returned, rejected Promises\r\n    - Fix JSDoc for `Router` constructor\r\n    - deps: debug@3.1.0\r\n    - deps: parseurl@~1.3.2\r\n    - deps: setprototypeof@1.1.0\r\n    - deps: utils-merge@1.0.1\r\n"
+  },
+  {
+    "tag_name": "4.16.4",
+    "name": "4.16.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Fix issue where `\"Request aborted\"` may be logged in `res.sendfile`\r\n  * Fix JSDoc for `Router` constructor\r\n  * deps: body-parser@1.18.3\r\n    - Fix deprecation warnings on Node.js 10+\r\n    - Fix stack trace for strict json parse error\r\n    - deps: depd@~1.1.2\r\n    - deps: http-errors@~1.6.3\r\n    - deps: iconv-lite@0.4.23\r\n    - deps: qs@6.5.2\r\n    - deps: raw-body@2.3.3\r\n    - deps: type-is@~1.6.16\r\n  * deps: proxy-addr@~2.0.4\r\n    - deps: ipaddr.js@1.8.0\r\n  * deps: qs@6.5.2\r\n  * deps: safe-buffer@5.1.2"
+  },
+  {
+    "tag_name": "4.16.3",
+    "name": "4.16.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: accepts@~1.3.5\r\n    - deps: mime-types@~2.1.18\r\n  * deps: depd@~1.1.2\r\n    - perf: remove argument reassignment\r\n  * deps: encodeurl@~1.0.2\r\n    - Fix encoding `%` as last character\r\n  * deps: finalhandler@1.1.1\r\n    - Fix 404 output for bad / missing pathnames\r\n    - deps: encodeurl@~1.0.2\r\n    - deps: statuses@~1.4.0\r\n  * deps: proxy-addr@~2.0.3\r\n    - deps: ipaddr.js@1.6.0\r\n  * deps: send@0.16.2\r\n    - Fix incorrect end tag in default error & redirects\r\n    - deps: depd@~1.1.2\r\n    - deps: encodeurl@~1.0.2\r\n    - deps: statuses@~1.4.0\r\n  * deps: serve-static@1.13.2\r\n    - Fix incorrect end tag in redirects\r\n    - deps: encodeurl@~1.0.2\r\n    - deps: send@0.16.2\r\n  * deps: statuses@~1.4.0\r\n  * deps: type-is@~1.6.16\r\n    - deps: mime-types@~2.1.18"
+  },
+  {
+    "tag_name": "4.16.2",
+    "name": "4.16.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Fix `TypeError` in `res.send` when given `Buffer` and `ETag` header set\r\n  * perf: skip parsing of entire `X-Forwarded-Proto` header"
+  },
+  {
+    "tag_name": "4.16.1",
+    "name": "4.16.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: send@0.16.1\r\n  * deps: serve-static@1.13.1\r\n    - Fix regression when `root` is incorrectly set to a file\r\n    - deps: send@0.16.1"
+  },
+  {
+    "tag_name": "4.16.0",
+    "name": "4.16.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Add `\"json escape\"` setting for `res.json` and `res.jsonp`\r\n  * Add `express.json` and `express.urlencoded` to parse bodies\r\n  * Add `options` argument to `res.download`\r\n  * Improve error message when autoloading invalid view engine\r\n  * Improve error messages when non-function provided as middleware\r\n  * Skip `Buffer` encoding when not generating ETag for small response\r\n  * Use `safe-buffer` for improved Buffer API\r\n  * deps: accepts@~1.3.4\r\n    - deps: mime-types@~2.1.16\r\n  * deps: content-type@~1.0.4\r\n    - perf: remove argument reassignment\r\n    - perf: skip parameter parsing when no parameters\r\n  * deps: etag@~1.8.1\r\n    - perf: replace regular expression with substring\r\n  * deps: finalhandler@1.1.0\r\n    - Use `res.headersSent` when available\r\n  * deps: parseurl@~1.3.2\r\n    - perf: reduce overhead for full URLs\r\n    - perf: unroll the \"fast-path\" `RegExp`\r\n  * deps: proxy-addr@~2.0.2\r\n    - Fix trimming leading / trailing OWS in `X-Forwarded-For`\r\n    - deps: forwarded@~0.1.2\r\n    - deps: ipaddr.js@1.5.2\r\n    - perf: reduce overhead when no `X-Forwarded-For` header\r\n  * deps: qs@6.5.1\r\n    - Fix parsing & compacting very deep objects\r\n  * deps: send@0.16.0\r\n    - Add 70 new types for file extensions\r\n    - Add `immutable` option\r\n    - Fix missing `</html>` in default error & redirects\r\n    - Set charset as \"UTF-8\" for .js and .json\r\n    - Use instance methods on steam to check for listeners\r\n    - deps: mime@1.4.1\r\n    - perf: improve path validation speed\r\n  * deps: serve-static@1.13.0\r\n    - Add 70 new types for file extensions\r\n    - Add `immutable` option\r\n    - Set charset as \"UTF-8\" for .js and .json\r\n    - deps: send@0.16.0\r\n  * deps: setprototypeof@1.1.0\r\n  * deps: utils-merge@1.0.1\r\n  * deps: vary@~1.1.2\r\n    - perf: improve header token parsing speed\r\n  * perf: re-use options object when generating ETags\r\n  * perf: remove dead `.charset` set in `res.jsonp`"
+  },
+  {
+    "tag_name": "5.0.0-alpha.6",
+    "name": "5.0.0-alpha.6",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the sixth Express 5.0 alpha release, based off 4.15.5 and includes\r\nchanges from 5.0.0-alpha.5.\r\n\r\n  * remove:\r\n    - `res.redirect(url, status)` signature - use `res.redirect(status, url)`\r\n    - `res.send(status, body)` signature - use `res.status(status).send(body)`\r\n  * deps: router@~1.3.1\r\n    - deps: debug@2.6.8"
+  },
+  {
+    "tag_name": "4.15.5",
+    "name": "4.15.5",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: debug@2.6.9\r\n  * deps: finalhandler@~1.0.6\r\n    - deps: debug@2.6.9\r\n    - deps: parseurl@~1.3.2\r\n  * deps: fresh@0.5.2\r\n    - Fix handling of modified headers with invalid dates\r\n    - perf: improve ETag match loop\r\n    - perf: improve `If-None-Match` token parsing\r\n  * deps: send@0.15.6\r\n    - Fix handling of modified headers with invalid dates\r\n    - deps: debug@2.6.9\r\n    - deps: etag@~1.8.1\r\n    - deps: fresh@0.5.2\r\n    - perf: improve `If-Match` token parsing\r\n  * deps: serve-static@1.12.6\r\n    - deps: parseurl@~1.3.2\r\n    - deps: send@0.15.6\r\n    - perf: improve slash collapsing"
+  },
+  {
+    "tag_name": "4.15.4",
+    "name": "4.15.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: debug@2.6.8\r\n  * deps: depd@~1.1.1\r\n    - Remove unnecessary `Buffer` loading\r\n  * deps: finalhandler@~1.0.4\r\n    - deps: debug@2.6.8\r\n  * deps: proxy-addr@~1.1.5\r\n    - Fix array argument being altered\r\n    - deps: ipaddr.js@1.4.0\r\n  * deps: qs@6.5.0\r\n  * deps: send@0.15.4\r\n    - deps: debug@2.6.8\r\n    - deps: depd@~1.1.1\r\n    - deps: http-errors@~1.6.2\r\n  * deps: serve-static@1.12.4\r\n    - deps: send@0.15.4"
+  },
+  {
+    "tag_name": "4.15.3",
+    "name": "4.15.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * Fix error when `res.set` cannot add charset to `Content-Type`\r\n  * deps: debug@2.6.7\r\n    - Fix `DEBUG_MAX_ARRAY_LENGTH`\r\n    - deps: ms@2.0.0\r\n  * deps: finalhandler@~1.0.3\r\n    - Fix missing `</html>` in HTML document\r\n    - deps: debug@2.6.7\r\n  * deps: proxy-addr@~1.1.4\r\n    - deps: ipaddr.js@1.3.0\r\n  * deps: send@0.15.3\r\n    - deps: debug@2.6.7\r\n    - deps: ms@2.0.0\r\n  * deps: serve-static@1.12.3\r\n    - deps: send@0.15.3\r\n  * deps: type-is@~1.6.15\r\n    - deps: mime-types@~2.1.15\r\n  * deps: vary@~1.1.1\r\n    - perf: hoist regular expression"
+  },
+  {
+    "tag_name": "5.0.0-alpha.5",
+    "name": "5.0.0-alpha.5",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the fifth Express 5.0 alpha release, based off 4.15.2 and includes\r\nchanges from 5.0.0-alpha.4."
+  },
+  {
+    "tag_name": "4.15.2",
+    "name": "4.15.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: qs@6.4.0\r\n    - Fix regression parsing keys starting with `[`"
+  },
+  {
+    "tag_name": "4.15.1",
+    "name": "4.15.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "  * deps: send@0.15.1\r\n    - Fix issue when `Date.parse` does not return `NaN` on invalid date\r\n    - Fix strict violation in broken environments\r\n  * deps: serve-static@1.12.1\r\n    - Fix issue when `Date.parse` does not return `NaN` on invalid date\r\n    - deps: send@0.15.1"
+  },
+  {
+    "tag_name": "5.0.0-alpha.4",
+    "name": "5.0.0-alpha.4",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the fourth Express 5.0 alpha release, based off 4.15.0 and includes\nchanges from 5.0.0-alpha.3.\n- remove:\n  - Remove Express 3.x middleware error stubs\n- deps: router@~1.3.0\n  - Add `next(\"router\")` to exit from router\n  - Fix case where `router.use` skipped requests routes did not\n  - Skip routing when `req.url` is not set\n  - Use `%o` in path debug to tell types apart\n  - deps: debug@2.6.1\n  - deps: setprototypeof@1.0.3\n  - perf: add fast match path for `*` route\n"
+  },
+  {
+    "tag_name": "4.15.0",
+    "name": "4.15.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Add debug message when loading view engine\n- Add `next(\"router\")` to exit from router\n- Fix case where `router.use` skipped requests routes did not\n- Remove usage of `res._headers` private field\n  - Improves compatibility with Node.js 8 nightly\n- Skip routing when `req.url` is not set\n- Use `%o` in path debug to tell types apart\n- Use `Object.create` to setup request & response prototypes\n- Use `setprototypeof` module to replace `__proto__` setting\n- Use `statuses` instead of `http` module for status messages\n- deps: debug@2.6.1\n  - Allow colors in workers\n  - Deprecated `DEBUG_FD` environment variable set to `3` or higher\n  - Fix error when running under React Native\n  - Use same color for same namespace\n  - deps: ms@0.7.2\n- deps: etag@~1.8.0\n  - Use SHA1 instead of MD5 for ETag hashing\n  - Works with FIPS 140-2 OpenSSL configuration\n- deps: finalhandler@~1.0.0\n  - Fix exception when `err` cannot be converted to a string\n  - Fully URL-encode the pathname in the 404\n  - Only include the pathname in the 404 message\n  - Send complete HTML document\n  - Set `Content-Security-Policy: default-src 'self'` header\n  - deps: debug@2.6.1\n- deps: fresh@0.5.0\n  - Fix false detection of `no-cache` request directive\n  - Fix incorrect result when `If-None-Match` has both `*` and ETags\n  - Fix weak `ETag` matching to match spec\n  - perf: delay reading header values until needed\n  - perf: enable strict mode\n  - perf: hoist regular expressions\n  - perf: remove duplicate conditional\n  - perf: remove unnecessary boolean coercions\n  - perf: skip checking modified time if ETag check failed\n  - perf: skip parsing `If-None-Match` when no `ETag` header\n  - perf: use `Date.parse` instead of `new Date`\n- deps: qs@6.3.1\n  - Fix array parsing from skipping empty values\n  - Fix compacting nested arrays\n- deps: send@0.15.0\n  - Fix false detection of `no-cache` request directive\n  - Fix incorrect result when `If-None-Match` has both `*` and ETags\n  - Fix weak `ETag` matching to match spec\n  - Remove usage of `res._headers` private field\n  - Support `If-Match` and `If-Unmodified-Since` headers\n  - Use `res.getHeaderNames()` when available\n  - Use `res.headersSent` when available\n  - deps: debug@2.6.1\n  - deps: etag@~1.8.0\n  - deps: fresh@0.5.0\n  - deps: http-errors@~1.6.1\n- deps: serve-static@1.12.0\n  - Fix false detection of `no-cache` request directive\n  - Fix incorrect result when `If-None-Match` has both `*` and ETags\n  - Fix weak `ETag` matching to match spec\n  - Remove usage of `res._headers` private field\n  - Send complete HTML document in redirect response\n  - Set default CSP header in redirect response\n  - Support `If-Match` and `If-Unmodified-Since` headers\n  - Use `res.getHeaderNames()` when available\n  - Use `res.headersSent` when available\n  - deps: send@0.15.0\n- perf: add fast match path for `*` route\n- perf: improve `req.ips` performance\n"
+  },
+  {
+    "tag_name": "5.0.0-alpha.3",
+    "name": "5.0.0-alpha.3",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the third Express 5.0 alpha release, based off 4.14.1 and includes\nchanges from 5.0.0-alpha.2.\n- remove:\n  - `res.json(status, obj)` signature - use `res.status(status).json(obj)`\n  - `res.jsonp(status, obj)` signature - use `res.status(status).jsonp(obj)`\n  - `res.vary()` (no arguments) -- provide a field name as an argument\n- deps: array-flatten@2.1.1\n- deps: path-is-absolute@1.0.1\n- deps: router@~1.1.5\n  - deps: array-flatten@2.0.1\n  - deps: methods@~1.1.2\n  - deps: parseurl@~1.3.1\n  - deps: setprototypeof@1.0.2\n"
+  },
+  {
+    "tag_name": "4.14.1",
+    "name": "4.14.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: content-disposition@0.5.2\n- deps: finalhandler@0.5.1\n  - Fix exception when `err.headers` is not an object\n  - deps: statuses@~1.3.1\n  - perf: hoist regular expressions\n  - perf: remove duplicate validation path\n- deps: proxy-addr@~1.1.3\n  - deps: ipaddr.js@1.2.0\n- deps: send@0.14.2\n  - deps: http-errors@~1.5.1\n  - deps: ms@0.7.2\n  - deps: statuses@~1.3.1\n- deps: serve-static@~1.11.2\n  - deps: send@0.14.2\n- deps: type-is@~1.6.14\n  - deps: mime-types@~2.1.13\n"
+  },
+  {
+    "tag_name": "4.14.0",
+    "name": "4.14.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Add `acceptRanges` option to `res.sendFile`/`res.sendfile`\n- Add `cacheControl` option to `res.sendFile`/`res.sendfile`\n- Add `options` argument to `req.range`\n  - Includes the `combine` option\n- Encode URL in `res.location`/`res.redirect` if not already encoded\n- Fix some redirect handling in `res.sendFile`/`res.sendfile`\n- Fix Windows absolute path check using forward slashes\n- Improve error with invalid arguments to `req.get()`\n- Improve performance for `res.json`/`res.jsonp` in most cases\n- Improve `Range` header handling in `res.sendFile`/`res.sendfile`\n- deps: accepts@~1.3.3\n  - Fix including type extensions in parameters in `Accept` parsing\n  - Fix parsing `Accept` parameters with quoted equals\n  - Fix parsing `Accept` parameters with quoted semicolons\n  - Many performance improvments\n  - deps: mime-types@~2.1.11\n  - deps: negotiator@0.6.1\n- deps: content-type@~1.0.2\n  - perf: enable strict mode\n- deps: cookie@0.3.1\n  - Add `sameSite` option\n  - Fix cookie `Max-Age` to never be a floating point number\n  - Improve error message when `encode` is not a function\n  - Improve error message when `expires` is not a `Date`\n  - Throw better error for invalid argument to parse\n  - Throw on invalid values provided to `serialize`\n  - perf: enable strict mode\n  - perf: hoist regular expression\n  - perf: use for loop in parse\n  - perf: use string concatination for serialization\n- deps: finalhandler@0.5.0\n  - Change invalid or non-numeric status code to 500\n  - Overwrite status message to match set status code\n  - Prefer `err.statusCode` if `err.status` is invalid\n  - Set response headers from `err.headers` object\n  - Use `statuses` instead of `http` module for status messages\n- deps: proxy-addr@~1.1.2\n  - Fix accepting various invalid netmasks\n  - Fix IPv6-mapped IPv4 validation edge cases\n  - IPv4 netmasks must be contingous\n  - IPv6 addresses cannot be used as a netmask\n  - deps: ipaddr.js@1.1.1\n- deps: qs@6.2.0\n  - Add `decoder` option in `parse` function\n- deps: range-parser@~1.2.0\n  - Add `combine` option to combine overlapping ranges\n  - Fix incorrectly returning -1 when there is at least one valid range\n  - perf: remove internal function\n- deps: send@0.14.1\n  - Add `acceptRanges` option\n  - Add `cacheControl` option\n  - Attempt to combine multiple ranges into single range\n  - Correctly inherit from `Stream` class\n  - Fix `Content-Range` header in 416 responses when using `start`/`end` options\n  - Fix `Content-Range` header missing from default 416 responses\n  - Fix redirect error when `path` contains raw non-URL characters\n  - Fix redirect when `path` starts with multiple forward slashes\n  - Ignore non-byte `Range` headers\n  - deps: http-errors@~1.5.0\n  - deps: range-parser@~1.2.0\n  - deps: statuses@~1.3.0\n  - perf: remove argument reassignment\n- deps: serve-static@~1.11.1\n  - Add `acceptRanges` option\n  - Add `cacheControl` option\n  - Attempt to combine multiple ranges into single range\n  - Fix redirect error when `req.url` contains raw non-URL characters\n  - Ignore non-byte `Range` headers\n  - Use status code 301 for redirects\n  - deps: send@0.14.1\n- deps: type-is@~1.6.13\n  - Fix type error when given invalid type to match against\n  - deps: mime-types@~2.1.11\n- deps: vary@~1.1.0\n  - Only accept valid field names in the `field` argument\n- perf: use strict equality when possible\n"
+  },
+  {
+    "tag_name": "4.13.4",
+    "name": "4.13.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: content-disposition@0.5.1\n  - perf: enable strict mode\n- deps: cookie@0.1.5\n  - Throw on invalid values provided to `serialize`\n- deps: depd@~1.1.0\n  - Support web browser loading\n  - perf: enable strict mode\n- deps: escape-html@~1.0.3\n  - perf: enable strict mode\n  - perf: optimize string replacement\n  - perf: use faster string coercion\n- deps: finalhandler@0.4.1\n  - deps: escape-html@~1.0.3\n- deps: merge-descriptors@1.0.1\n  - perf: enable strict mode\n- deps: methods@~1.1.2\n  - perf: enable strict mode\n- deps: parseurl@~1.3.1\n  - perf: enable strict mode\n- deps: proxy-addr@~1.0.10\n  - deps: ipaddr.js@1.0.5\n  - perf: enable strict mode\n- deps: range-parser@~1.0.3\n  - perf: enable strict mode\n- deps: send@0.13.1\n  - deps: depd@~1.1.0\n  - deps: destroy@~1.0.4\n  - deps: escape-html@~1.0.3\n  - deps: range-parser@~1.0.3\n- deps: serve-static@~1.10.2\n  - deps: escape-html@~1.0.3\n  - deps: parseurl@~1.3.0\n  - deps: send@0.13.1\n"
+  },
+  {
+    "tag_name": "4.13.3",
+    "name": "4.13.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix infinite loop condition using `mergeParams: true`\n- Fix inner numeric indices incorrectly altering parent `req.params`\n"
+  },
+  {
+    "tag_name": "4.13.2",
+    "name": "4.13.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: accepts@~1.2.12\n  - deps: mime-types@~2.1.4\n- deps: array-flatten@1.1.1\n  - perf: enable strict mode\n- deps: path-to-regexp@0.1.7\n  - Fix regression with escaped round brackets and matching groups\n- deps: type-is@~1.6.6\n  - deps: mime-types@~2.1.4\n"
+  },
+  {
+    "tag_name": "3.21.2",
+    "name": "3.21.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.30.2\n  - deps: body-parser@~1.13.3\n  - deps: compression@~1.5.2\n  - deps: errorhandler@~1.4.2\n  - deps: method-override@~2.3.5\n  - deps: serve-index@~1.7.2\n  - deps: type-is@~1.6.6\n  - deps: vhost@~3.0.1\n- deps: vary@~1.0.1\n  - Fix setting empty header from empty `field`\n  - perf: enable strict mode\n  - perf: remove argument reassignments\n"
+  },
+  {
+    "tag_name": "5.0.0-alpha.2",
+    "name": "5.0.0-alpha.2",
+    "draft": false,
+    "prerelease": true,
+    "body": "This is the second Express 5.0 alpha release, based off 4.13.1 and includes\nchanges from 5.0.0-alpha.1.\n- remove:\n  - `app.param(fn)`\n  - `req.param()` -- use `req.params`, `req.body`, or `req.query` instead\n- change:\n  - `res.render` callback is always async, even for sync view engines\n  - The leading `:` character in `name` for `app.param(name, fn)` is no longer removed\n  - Use `router` module for routing\n  - Use `path-is-absolute` module for absolute path detection\n"
+  },
+  {
+    "tag_name": "4.13.1",
+    "name": "4.13.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: accepts@~1.2.10\n  - deps: mime-types@~2.1.2\n- deps: qs@4.0.0\n  - Fix dropping parameters like `hasOwnProperty`\n  - Fix various parsing edge cases\n- deps: type-is@~1.6.4\n  - deps: mime-types@~2.1.2\n  - perf: enable strict mode\n  - perf: remove argument reassignment\n"
+  },
+  {
+    "tag_name": "3.21.1",
+    "name": "3.21.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: basic-auth@~1.0.3\n- deps: connect@2.30.1\n  - deps: body-parser@~1.13.2\n  - deps: compression@~1.5.1\n  - deps: errorhandler@~1.4.1\n  - deps: morgan@~1.6.1\n  - deps: pause@0.1.0\n  - deps: qs@4.0.0\n  - deps: serve-index@~1.7.1\n  - deps: type-is@~1.6.4\n"
+  },
+  {
+    "tag_name": "4.13.0",
+    "name": "4.13.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Add settings to debug output\n- Fix `res.format` error when only `default` provided\n- Fix issue where `next('route')` in `app.param` would incorrectly skip values\n- Fix hiding platform issues with `decodeURIComponent`\n  - Only `URIError`s are a 400\n- Fix using `*` before params in routes\n- Fix using capture groups before params in routes\n- Simplify `res.cookie` to call `res.append`\n- Use `array-flatten` module for flattening arrays\n- deps: accepts@~1.2.9\n  - deps: mime-types@~2.1.1\n  - perf: avoid argument reassignment & argument slice\n  - perf: avoid negotiator recursive construction\n  - perf: enable strict mode\n  - perf: remove unnecessary bitwise operator\n- deps: cookie@0.1.3\n  - perf: deduce the scope of try-catch deopt\n  - perf: remove argument reassignments\n- deps: escape-html@1.0.2\n- deps: etag@~1.7.0\n  - Always include entity length in ETags for hash length extensions\n  - Generate non-Stats ETags using MD5 only (no longer CRC32)\n  - Improve stat performance by removing hashing\n  - Improve support for JXcore\n  - Remove base64 padding in ETags to shorten\n  - Support \"fake\" stats objects in environments without fs\n  - Use MD5 instead of MD4 in weak ETags over 1KB\n- deps: finalhandler@0.4.0\n  - Fix a false-positive when unpiping in Node.js 0.8\n  - Support `statusCode` property on `Error` objects\n  - Use `unpipe` module for unpiping requests\n  - deps: escape-html@1.0.2\n  - deps: on-finished@~2.3.0\n  - perf: enable strict mode\n  - perf: remove argument reassignment\n- deps: fresh@0.3.0\n  - Add weak `ETag` matching support\n- deps: on-finished@~2.3.0\n  - Add defined behavior for HTTP `CONNECT` requests\n  - Add defined behavior for HTTP `Upgrade` requests\n  - deps: ee-first@1.1.1\n- deps: path-to-regexp@0.1.6\n- deps: send@0.13.0\n  - Allow Node.js HTTP server to set `Date` response header\n  - Fix incorrectly removing `Content-Location` on 304 response\n  - Improve the default redirect response headers\n  - Send appropriate headers on default error response\n  - Use `http-errors` for standard emitted errors\n  - Use `statuses` instead of `http` module for status messages\n  - deps: escape-html@1.0.2\n  - deps: etag@~1.7.0\n  - deps: fresh@0.3.0\n  - deps: on-finished@~2.3.0\n  - perf: enable strict mode\n  - perf: remove unnecessary array allocations\n- deps: serve-static@~1.10.0\n  - Add `fallthrough` option\n  - Fix reading options from options prototype\n  - Improve the default redirect response headers\n  - Malformed URLs now `next()` instead of 400\n  - deps: escape-html@1.0.2\n  - deps: send@0.13.0\n  - perf: enable strict mode\n  - perf: remove argument reassignment\n- deps: type-is@~1.6.3\n  - deps: mime-types@~2.1.1\n  - perf: reduce try block size\n  - perf: remove bitwise operations\n- perf: enable strict mode\n- perf: isolate `app.render` try block\n- perf: remove argument reassignments in application\n- perf: remove argument reassignments in request prototype\n- perf: remove argument reassignments in response prototype\n- perf: remove argument reassignments in routing\n- perf: remove argument reassignments in `View`\n- perf: skip attempting to decode zero length string\n- perf: use saved reference to `http.STATUS_CODES`\n"
+  },
+  {
+    "tag_name": "3.21.0",
+    "name": "3.21.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: basic-auth@1.0.2\n  - perf: enable strict mode\n  - perf: hoist regular expression\n  - perf: parse with regular expressions\n  - perf: remove argument reassignment\n- deps: connect@2.30.0\n  - deps: body-parser@~1.13.1\n  - deps: bytes@2.1.0\n  - deps: compression@~1.5.0\n  - deps: cookie@0.1.3\n  - deps: cookie-parser@~1.3.5\n  - deps: csurf@~1.8.3\n  - deps: errorhandler@~1.4.0\n  - deps: express-session@~1.11.3\n  - deps: finalhandler@0.4.0\n  - deps: fresh@0.3.0\n  - deps: morgan@~1.6.0\n  - deps: serve-favicon@~2.3.0\n  - deps: serve-index@~1.7.0\n  - deps: serve-static@~1.10.0\n  - deps: type-is@~1.6.3\n- deps: cookie@0.1.3\n  - perf: deduce the scope of try-catch deopt\n  - perf: remove argument reassignments\n- deps: escape-html@1.0.2\n- deps: etag@~1.7.0\n  - Always include entity length in ETags for hash length extensions\n  - Generate non-Stats ETags using MD5 only (no longer CRC32)\n  - Improve stat performance by removing hashing\n  - Improve support for JXcore\n  - Remove base64 padding in ETags to shorten\n  - Support \"fake\" stats objects in environments without fs\n  - Use MD5 instead of MD4 in weak ETags over 1KB\n- deps: fresh@0.3.0\n  - Add weak `ETag` matching support\n- deps: mkdirp@0.5.1\n  - Work in global strict mode\n- deps: send@0.13.0\n  - Allow Node.js HTTP server to set `Date` response header\n  - Fix incorrectly removing `Content-Location` on 304 response\n  - Improve the default redirect response headers\n  - Send appropriate headers on default error response\n  - Use `http-errors` for standard emitted errors\n  - Use `statuses` instead of `http` module for status messages\n  - deps: escape-html@1.0.2\n  - deps: etag@~1.7.0\n  - deps: fresh@0.3.0\n  - deps: on-finished@~2.3.0\n  - perf: enable strict mode\n  - perf: remove unnecessary array allocations\n"
+  },
+  {
+    "tag_name": "4.12.4",
+    "name": "4.12.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: accepts@~1.2.7\n  - deps: mime-types@~2.0.11\n  - deps: negotiator@0.5.3\n- deps: debug@~2.2.0\n  - deps: ms@0.7.1\n- deps: depd@~1.0.1\n- deps: etag@~1.6.0\n  - Improve support for JXcore\n  - Support \"fake\" stats objects in environments without `fs`\n- deps: finalhandler@0.3.6\n  - deps: debug@~2.2.0\n  - deps: on-finished@~2.2.1\n- deps: on-finished@~2.2.1\n  - Fix `isFinished(req)` when data buffered\n- deps: proxy-addr@~1.0.8\n  - deps: ipaddr.js@1.0.1\n- deps: qs@2.4.2\n  - Fix allowing parameters like `constructor`\n- deps: send@0.12.3\n  - deps: debug@~2.2.0\n  - deps: depd@~1.0.1\n  - deps: etag@~1.6.0\n  - deps: ms@0.7.1\n  - deps: on-finished@~2.2.1\n- deps: serve-static@~1.9.3\n  - deps: send@0.12.3\n- deps: type-is@~1.6.2\n  - deps: mime-types@~2.0.11\n"
+  },
+  {
+    "tag_name": "3.20.3",
+    "name": "3.20.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.29.2\n  - deps: body-parser@~1.12.4\n  - deps: compression@~1.4.4\n  - deps: connect-timeout@~1.6.2\n  - deps: debug@~2.2.0\n  - deps: depd@~1.0.1\n  - deps: errorhandler@~1.3.6\n  - deps: finalhandler@0.3.6\n  - deps: method-override@~2.3.3\n  - deps: morgan@~1.5.3\n  - deps: qs@2.4.2\n  - deps: response-time@~2.3.1\n  - deps: serve-favicon@~2.2.1\n  - deps: serve-index@~1.6.4\n  - deps: serve-static@~1.9.3\n  - deps: type-is@~1.6.2\n- deps: debug@~2.2.0\n  - deps: ms@0.7.1\n- deps: depd@~1.0.1\n- deps: proxy-addr@~1.0.8\n  - deps: ipaddr.js@1.0.1\n- deps: send@0.12.3\n  - deps: debug@~2.2.0\n  - deps: depd@~1.0.1\n  - deps: etag@~1.6.0\n  - deps: ms@0.7.1\n  - deps: on-finished@~2.2.1\n"
+  },
+  {
+    "tag_name": "4.12.3",
+    "name": "4.12.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: accepts@~1.2.5\n  - deps: mime-types@~2.0.10\n- deps: debug@~2.1.3\n  - Fix high intensity foreground color for bold\n  - deps: ms@0.7.0\n- deps: finalhandler@0.3.4\n  - deps: debug@~2.1.3\n- deps: proxy-addr@~1.0.7\n  - deps: ipaddr.js@0.1.9\n- deps: qs@2.4.1\n  - Fix error when parameter `hasOwnProperty` is present\n- deps: send@0.12.2\n  - Throw errors early for invalid `extensions` or `index` options\n  - deps: debug@~2.1.3\n- deps: serve-static@~1.9.2\n  - deps: send@0.12.2\n- deps: type-is@~1.6.1\n  - deps: mime-types@~2.0.10\n"
+  },
+  {
+    "tag_name": "3.20.2",
+    "name": "3.20.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.29.1\n  - deps: body-parser@~1.12.2\n  - deps: compression@~1.4.3\n  - deps: connect-timeout@~1.6.1\n  - deps: debug@~2.1.3\n  - deps: errorhandler@~1.3.5\n  - deps: express-session@~1.10.4\n  - deps: finalhandler@0.3.4\n  - deps: method-override@~2.3.2\n  - deps: morgan@~1.5.2\n  - deps: qs@2.4.1\n  - deps: serve-index@~1.6.3\n  - deps: serve-static@~1.9.2\n  - deps: type-is@~1.6.1\n- deps: debug@~2.1.3\n  - Fix high intensity foreground color for bold\n  - deps: ms@0.7.0\n- deps: merge-descriptors@1.0.0\n- deps: proxy-addr@~1.0.7\n  - deps: ipaddr.js@0.1.9\n- deps: send@0.12.2\n  - Throw errors early for invalid `extensions` or `index` options\n  - deps: debug@~2.1.3\n"
+  },
+  {
+    "tag_name": "4.12.2",
+    "name": "4.12.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix regression where `\"Request aborted\"` is logged using `res.sendFile`\n"
+  },
+  {
+    "tag_name": "4.12.1",
+    "name": "4.12.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix constructing application with non-configurable prototype properties\n- Fix `ECONNRESET` errors from `res.sendFile` usage\n- Fix `req.host` when using \"trust proxy\" hops count\n- Fix `req.protocol`/`req.secure` when using \"trust proxy\" hops count\n- Fix wrong `code` on aborted connections from `res.sendFile`\n- deps: merge-descriptors@1.0.0\n"
+  },
+  {
+    "tag_name": "3.20.1",
+    "name": "3.20.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `req.host` when using \"trust proxy\" hops count\n- Fix `req.protocol`/`req.secure` when using \"trust proxy\" hops count\n"
+  },
+  {
+    "tag_name": "4.12.0",
+    "name": "4.12.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `\"trust proxy\"` setting to inherit when app is mounted\n- Generate `ETag`s for all request responses\n  - No longer restricted to only responses for `GET` and `HEAD` requests\n- Use `content-type` to parse `Content-Type` headers\n- deps: accepts@~1.2.4\n  - Fix preference sorting to be stable for long acceptable lists\n  - deps: mime-types@~2.0.9\n  - deps: negotiator@0.5.1\n- deps: cookie-signature@1.0.6\n- deps: send@0.12.1\n  - Always read the stat size from the file\n  - Fix mutating passed-in `options`\n  - deps: mime@1.3.4\n- deps: serve-static@~1.9.1\n  - deps: send@0.12.1\n- deps: type-is@~1.6.0\n  - fix argument reassignment\n  - fix false-positives in `hasBody` `Transfer-Encoding` check\n  - support wildcard for both type and subtype (`*/*`)\n  - deps: mime-types@~2.0.9\n"
+  },
+  {
+    "tag_name": "3.20.0",
+    "name": "3.20.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `\"trust proxy\"` setting to inherit when app is mounted\n- Generate `ETag`s for all request responses\n  - No longer restricted to only responses for `GET` and `HEAD` requests\n- Use `content-type` to parse `Content-Type` headers\n- deps: connect@2.29.0\n  - Use `content-type` to parse `Content-Type` headers\n  - deps: body-parser@~1.12.0\n  - deps: compression@~1.4.1\n  - deps: connect-timeout@~1.6.0\n  - deps: cookie-parser@~1.3.4\n  - deps: cookie-signature@1.0.6\n  - deps: csurf@~1.7.0\n  - deps: errorhandler@~1.3.4\n  - deps: express-session@~1.10.3\n  - deps: http-errors@~1.3.1\n  - deps: response-time@~2.3.0\n  - deps: serve-index@~1.6.2\n  - deps: serve-static@~1.9.1\n  - deps: type-is@~1.6.0\n- deps: cookie-signature@1.0.6\n- deps: send@0.12.1\n  - Always read the stat size from the file\n  - Fix mutating passed-in `options`\n  - deps: mime@1.3.4\n"
+  },
+  {
+    "tag_name": "4.11.2",
+    "name": "4.11.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `res.redirect` double-calling `res.end` for `HEAD` requests\n- deps: accepts@~1.2.3\n  - deps: mime-types@~2.0.8\n- deps: proxy-addr@~1.0.6\n  - deps: ipaddr.js@0.1.8\n- deps: type-is@~1.5.6\n  - deps: mime-types@~2.0.8\n"
+  },
+  {
+    "tag_name": "3.19.2",
+    "name": "3.19.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.28.3\n  - deps: compression@~1.3.1\n  - deps: csurf@~1.6.6\n  - deps: errorhandler@~1.3.3\n  - deps: express-session@~1.10.2\n  - deps: serve-index@~1.6.1\n  - deps: type-is@~1.5.6\n- deps: proxy-addr@~1.0.6\n  - deps: ipaddr.js@0.1.8\n"
+  },
+  {
+    "tag_name": "4.11.1",
+    "name": "4.11.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: send@0.11.1\n  - Fix root path disclosure\n- deps: serve-static@~1.8.1\n  - Fix redirect loop in Node.js 0.11.14\n  - Fix root path disclosure\n  - deps: send@0.11.1\n"
+  },
+  {
+    "tag_name": "3.19.1",
+    "name": "3.19.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.28.2\n  - deps: body-parser@~1.10.2\n  - deps: serve-static@~1.8.1\n- deps: send@0.11.1\n  - Fix root path disclosure\n"
+  },
+  {
+    "tag_name": "4.11.0",
+    "name": "4.11.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Add `res.append(field, val)` to append headers\n- Deprecate leading `:` in `name` for `app.param(name, fn)`\n- Deprecate `req.param()` -- use `req.params`, `req.body`, or `req.query` instead\n- Deprecate `app.param(fn)`\n- Fix `OPTIONS` responses to include the `HEAD` method properly\n- Fix `res.sendFile` not always detecting aborted connection\n- Match routes iteratively to prevent stack overflows\n- deps: accepts@~1.2.2\n  - deps: mime-types@~2.0.7\n  - deps: negotiator@0.5.0\n- deps: send@0.11.0\n  - deps: debug@~2.1.1\n  - deps: etag@~1.5.1\n  - deps: ms@0.7.0\n  - deps: on-finished@~2.2.0\n- deps: serve-static@~1.8.0\n  - deps: send@0.11.0\n"
+  },
+  {
+    "tag_name": "4.10.8",
+    "name": "4.10.8",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix crash from error within `OPTIONS` response handler\n- deps: proxy-addr@~1.0.5\n  - deps: ipaddr.js@0.1.6\n"
+  },
+  {
+    "tag_name": "3.19.0",
+    "name": "3.19.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `OPTIONS` responses to include the `HEAD` method property\n- Use `readline` for prompt in `express(1)`\n- deps: commander@2.6.0\n- deps: connect@2.28.1\n  - deps: body-parser@~1.10.1\n  - deps: compression@~1.3.0\n  - deps: connect-timeout@~1.5.0\n  - deps: csurf@~1.6.4\n  - deps: debug@~2.1.1\n  - deps: errorhandler@~1.3.2\n  - deps: express-session@~1.10.1\n  - deps: finalhandler@0.3.3\n  - deps: method-override@~2.3.1\n  - deps: morgan@~1.5.1\n  - deps: serve-favicon@~2.2.0\n  - deps: serve-index@~1.6.0\n  - deps: serve-static@~1.8.0\n  - deps: type-is@~1.5.5\n- deps: debug@~2.1.1\n- deps: methods@~1.1.1\n- deps: proxy-addr@~1.0.5\n  - deps: ipaddr.js@0.1.6\n- deps: send@0.11.0\n  - deps: debug@~2.1.1\n  - deps: etag@~1.5.1\n  - deps: ms@0.7.0\n  - deps: on-finished@~2.2.0\n"
+  },
+  {
+    "tag_name": "4.10.7",
+    "name": "4.10.7",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `Allow` header for `OPTIONS` to not contain duplicate methods\n- Fix incorrect \"Request aborted\" for `res.sendFile` when `HEAD` or 304\n- deps: debug@~2.1.1\n- deps: finalhandler@0.3.3\n  - deps: debug@~2.1.1\n  - deps: on-finished@~2.2.0\n- deps: methods@~1.1.1\n- deps: on-finished@~2.2.0\n- deps: serve-static@~1.7.2\n  - Fix potential open redirect when mounted at root\n- deps: type-is@~1.5.5\n  - deps: mime-types@~2.0.7\n"
+  },
+  {
+    "tag_name": "4.10.6",
+    "name": "4.10.6",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix exception in `req.fresh`/`req.stale` without response headers\n"
+  },
+  {
+    "tag_name": "3.18.6",
+    "name": "3.18.6",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix exception in `req.fresh`/`req.stale` without response headers\n"
+  },
+  {
+    "tag_name": "3.18.5",
+    "name": "3.18.5",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.27.6\n  - deps: compression@~1.2.2\n  - deps: express-session@~1.9.3\n  - deps: http-errors@~1.2.8\n  - deps: serve-index@~1.5.3\n  - deps: type-is@~1.5.4\n"
+  },
+  {
+    "tag_name": "4.10.5",
+    "name": "4.10.5",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `res.send` double-calling `res.end` for `HEAD` requests\n- deps: accepts@~1.1.4\n  - deps: mime-types@~2.0.4\n- deps: type-is@~1.5.4\n  - deps: mime-types@~2.0.4\n"
+  },
+  {
+    "tag_name": "4.10.4",
+    "name": "4.10.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `res.sendfile` logging standard write errors\n"
+  },
+  {
+    "tag_name": "4.10.3",
+    "name": "4.10.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `res.sendFile` logging standard write errors\n- deps: etag@~1.5.1\n- deps: proxy-addr@~1.0.4\n  - deps: ipaddr.js@0.1.5\n- deps: qs@2.3.3\n  - Fix `arrayLimit` behavior\n"
+  },
+  {
+    "tag_name": "3.18.4",
+    "name": "3.18.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.27.4\n  - deps: body-parser@~1.9.3\n  - deps: compression@~1.2.1\n  - deps: errorhandler@~1.2.3\n  - deps: express-session@~1.9.2\n  - deps: qs@2.3.3\n  - deps: serve-favicon@~2.1.7\n  - deps: serve-static@~1.5.1\n  - deps: type-is@~1.5.3\n- deps: etag@~1.5.1\n- deps: proxy-addr@~1.0.4\n  - deps: ipaddr.js@0.1.5\n"
+  },
+  {
+    "tag_name": "4.10.2",
+    "name": "4.10.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Correctly invoke async router callback asynchronously\n- deps: accepts@~1.1.3\n  - deps: mime-types@~2.0.3\n- deps: type-is@~1.5.3\n  - deps: mime-types@~2.0.3\n"
+  },
+  {
+    "tag_name": "3.18.3",
+    "name": "3.18.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.27.3\n  - Correctly invoke async callback asynchronously\n  - deps: csurf@~1.6.3\n"
+  },
+  {
+    "tag_name": "5.0.0-alpha.1",
+    "name": "5.0.0-alpha.1",
+    "draft": false,
+    "prerelease": true,
+    "body": "- remove:\n  - `app.del` - use `app.delete`\n  - `req.acceptsCharset` - use `req.acceptsCharsets`\n  - `req.acceptsEncoding` - use `req.acceptsEncodings`\n  - `req.acceptsLanguage` - use `req.acceptsLanguages`\n  - `res.json(obj, status)` signature - use `res.json(status, obj)`\n  - `res.jsonp(obj, status)` signature - use `res.jsonp(status, obj)`\n  - `res.send(body, status)` signature - use `res.send(status, body)`\n  - `res.send(status)` signature - use `res.sendStatus(status)`\n  - `res.sendfile` - use `res.sendFile` instead\n  - `express.query` middleware\n- change:\n  - `req.host` now returns host (`hostname:port`) - use `req.hostname` for only hostname\n  - `req.query` is now a getter instead of a plain property\n- add:\n  - `app.router` is a reference to the base router\n"
+  },
+  {
+    "tag_name": "4.10.1",
+    "name": "4.10.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix handling of URLs containing `://` in the path\n- deps: qs@2.3.2\n  - Fix parsing of mixed objects and values\n"
+  },
+  {
+    "tag_name": "3.18.2",
+    "name": "3.18.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.27.2\n  - Fix handling of URLs containing `://` in the path\n  - deps: body-parser@~1.9.2\n  - deps: qs@2.3.2\n"
+  },
+  {
+    "tag_name": "4.10.0",
+    "name": "4.10.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Add support for `app.set('views', array)`\n  - Views are looked up in sequence in array of directories\n- Fix `res.send(status)` to mention `res.sendStatus(status)`\n- Fix handling of invalid empty URLs\n- Use `content-disposition` module for `res.attachment`/`res.download`\n  - Sends standards-compliant `Content-Disposition` header\n  - Full Unicode support\n- Use `path.resolve` in view lookup\n- deps: debug@~2.1.0\n  - Implement `DEBUG_FD` env variable support\n- deps: depd@~1.0.0\n- deps: etag@~1.5.0\n  - Improve string performance\n  - Slightly improve speed for weak ETags over 1KB\n- deps: finalhandler@0.3.2\n  - Terminate in progress response only on error\n  - Use `on-finished` to determine request status\n  - deps: debug@~2.1.0\n  - deps: on-finished@~2.1.1\n- deps: on-finished@~2.1.1\n  - Fix handling of pipelined requests\n- deps: qs@2.3.0\n  - Fix parsing of mixed implicit and explicit arrays\n- deps: send@0.10.1\n  - deps: debug@~2.1.0\n  - deps: depd@~1.0.0\n  - deps: etag@~1.5.0\n  - deps: on-finished@~2.1.1\n- deps: serve-static@~1.7.1\n  - deps: send@0.10.1\n"
+  },
+  {
+    "tag_name": "3.18.1",
+    "name": "3.18.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix internal `utils.merge` deprecation warnings\n- deps: connect@2.27.1\n  - deps: body-parser@~1.9.1\n  - deps: express-session@~1.9.1\n  - deps: finalhandler@0.3.2\n  - deps: morgan@~1.4.1\n  - deps: qs@2.3.0\n  - deps: serve-static@~1.7.1\n- deps: send@0.10.1\n  - deps: on-finished@~2.1.1\n"
+  },
+  {
+    "tag_name": "4.9.8",
+    "name": "4.9.8",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix `res.redirect` body when redirect status specified\n- deps: accepts@~1.1.2\n  - Fix error when media type has invalid parameter\n  - deps: negotiator@0.4.9\n"
+  },
+  {
+    "tag_name": "3.18.0",
+    "name": "3.18.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Use `content-disposition` module for `res.attachment`/`res.download`\n  - Sends standards-compliant `Content-Disposition` header\n  - Full Unicode support\n- Use `etag` module to generate `ETag` headers\n- deps: connect@2.27.0\n  - Use `http-errors` module for creating errors\n  - Use `utils-merge` module for merging objects\n  - deps: body-parser@~1.9.0\n  - deps: compression@~1.2.0\n  - deps: connect-timeout@~1.4.0\n  - deps: debug@~2.1.0\n  - deps: depd@~1.0.0\n  - deps: express-session@~1.9.0\n  - deps: finalhandler@0.3.1\n  - deps: method-override@~2.3.0\n  - deps: morgan@~1.4.0\n  - deps: response-time@~2.2.0\n  - deps: serve-favicon@~2.1.6\n  - deps: serve-index@~1.5.0\n  - deps: serve-static@~1.7.0\n- deps: debug@~2.1.0\n  - Implement `DEBUG_FD` env variable support\n- deps: depd@~1.0.0\n- deps: send@0.10.0\n  - deps: debug@~2.1.0\n  - deps: depd@~1.0.0\n  - deps: etag@~1.5.0\n"
+  },
+  {
+    "tag_name": "3.17.8",
+    "name": "3.17.8",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.26.6\n  - deps: compression@~1.1.2\n  - deps: csurf@~1.6.2\n  - deps: errorhandler@~1.2.2\n"
+  },
+  {
+    "tag_name": "4.9.7",
+    "name": "4.9.7",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix using same param name in array of paths\n"
+  },
+  {
+    "tag_name": "4.9.6",
+    "name": "4.9.6",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: accepts@~1.1.1\n  - deps: mime-types@~2.0.2\n  - deps: negotiator@0.4.8\n- deps: serve-static@~1.6.4\n  - Fix redirect loop when index file serving disabled\n- deps: type-is@~1.5.2\n  - deps: mime-types@~2.0.2\n"
+  },
+  {
+    "tag_name": "3.17.7",
+    "name": "3.17.7",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.26.5\n  - Fix accepting non-object arguments to `logger`\n  - deps: serve-static@~1.6.4\n"
+  },
+  {
+    "tag_name": "3.17.6",
+    "name": "3.17.6",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.26.4\n  - deps: morgan@~1.3.2\n  - deps: type-is@~1.5.2\n"
+  },
+  {
+    "tag_name": "4.9.5",
+    "name": "4.9.5",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: etag@~1.4.0\n- deps: proxy-addr@~1.0.3\n  - Use `forwarded` npm module\n- deps: send@0.9.3\n  - deps: etag@~1.4.0\n- deps: serve-static@~1.6.3\n  - deps: send@0.9.3\n"
+  },
+  {
+    "tag_name": "3.17.5",
+    "name": "3.17.5",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.26.3\n  - deps: body-parser@~1.8.4\n  - deps: serve-favicon@~2.1.5\n  - deps: serve-static@~1.6.3\n- deps: proxy-addr@~1.0.3\n  - Use `forwarded` npm module\n- deps: send@0.9.3\n  - deps: etag@~1.4.0\n"
+  },
+  {
+    "tag_name": "4.9.4",
+    "name": "4.9.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: qs@2.2.4\n  - Fix issue with object keys starting with numbers truncated\n"
+  },
+  {
+    "tag_name": "3.17.4",
+    "name": "3.17.4",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: connect@2.26.2\n  - deps: body-parser@~1.8.3\n  - deps: qs@2.2.4\n"
+  },
+  {
+    "tag_name": "4.9.3",
+    "name": "4.9.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: proxy-addr@~1.0.2\n  - Fix a global leak when multiple subnets are trusted\n  - deps: ipaddr.js@0.1.3\n"
+  },
+  {
+    "tag_name": "4.9.2",
+    "name": "4.9.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "- Fix regression for empty string `path` in `app.use`\n- Fix `router.use` to accept array of middleware without path\n- Improve error message for bad `app.use` arguments\n"
+  },
+  {
+    "tag_name": "3.17.3",
+    "name": "3.17.3",
+    "draft": false,
+    "prerelease": false,
+    "body": "- deps: proxy-addr@~1.0.2\n  - Fix a global leak when multiple subnets are trusted\n  - deps: ipaddr.js@0.1.3\n"
+  }
+]
