@@ -20,7 +20,8 @@ export interface Config {
     maxCallsPerRun: number;
   };
   github: { token: string | undefined };
-  redis: { url: string };
+  /** `password` is sent with AUTH; docker-compose.yml starts Redis with the same one. */
+  redis: { url: string; password: string | undefined };
   sandbox: {
     image: string;
     cpus: number;
@@ -84,6 +85,7 @@ const envSchema = z.object({
   REDIS_URL: z
     .url({ protocol: /^rediss?$/, error: 'must be a redis:// or rediss:// URL' })
     .default('redis://localhost:6379'),
+  REDIS_PASSWORD: z.string().optional(),
 
   SANDBOX_IMAGE: z.string().default('node:22-bookworm'),
   SANDBOX_CPUS: positiveInt.default(2),
@@ -135,7 +137,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
       maxCallsPerRun: values.LLM_MAX_CALLS_PER_RUN,
     },
     github: { token: values.GITHUB_TOKEN },
-    redis: { url: values.REDIS_URL },
+    redis: { url: values.REDIS_URL, password: values.REDIS_PASSWORD },
     sandbox: {
       image: values.SANDBOX_IMAGE,
       cpus: values.SANDBOX_CPUS,
