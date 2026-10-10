@@ -37,7 +37,7 @@ describe('parseConfig', () => {
       installTimeoutSec: 300,
       testTimeoutSec: 300,
     });
-    expect(config.fixAgent).toEqual({ maxAttempts: 3, maxSteps: 20 });
+    expect(config.fixAgent).toEqual({ maxAttempts: 3, maxSteps: 20, maxTokens: 200_000 });
     expect(config.workspaceDir).toBe('.workspaces');
   });
 
