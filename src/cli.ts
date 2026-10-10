@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { Command, InvalidArgumentError } from 'commander';
 import { ConfigError, loadEnvFile, parseConfig } from './config.js';
-import { describeConfig } from './doctor.js';
+import { checkDocker, describeConfig, describeDockerCheck } from './doctor.js';
 
 // Read the version from package.json. The path works from both src/ (tsx) and dist/ (built).
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -38,20 +38,39 @@ program
 
 program
   .command('doctor')
-  .description('Check that your setup is valid')
-  .action(() => {
+  .description('Check that your setup is valid: config, Docker, and a sandbox smoke test')
+  .option('--skip-docker', 'only check the config, without talking to Docker')
+  .action(async (options: { skipDocker?: boolean }) => {
     const envFileFound = loadEnvFile();
+
+    let config: ReturnType<typeof parseConfig>;
     try {
-      const config = parseConfig(process.env);
-      for (const line of describeConfig(config, envFileFound)) {
-        console.log(line);
-      }
+      config = parseConfig(process.env);
     } catch (error) {
       if (!(error instanceof ConfigError)) {
         throw error;
       }
       console.error(error.message);
       console.error('Fix these in .env (.env.example lists every setting).');
+      process.exitCode = 1;
+      return;
+    }
+
+    for (const line of describeConfig(config, envFileFound)) {
+      console.log(line);
+    }
+    if (options.skipDocker === true) {
+      return;
+    }
+
+    console.log('');
+    const check = await checkDocker(config, {
+      onProgress: (message) => console.log(`  ${message}`),
+    });
+    for (const line of describeDockerCheck(check)) {
+      console.log(line);
+    }
+    if (!check.ok) {
       process.exitCode = 1;
     }
   });
