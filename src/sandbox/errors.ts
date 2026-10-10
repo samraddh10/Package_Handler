@@ -15,8 +15,21 @@ export class SandboxError extends Error {
   }
 }
 
+/**
+ * The sandbox is fine, but this one request could not be carried out as asked:
+ * a file that does not exist, a folder where a file was expected, a search
+ * pattern grep cannot parse. Safe to show to an LLM, which can then correct
+ * itself; any other SandboxError means the sandbox itself is in trouble.
+ */
+export class SandboxRequestError extends SandboxError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SandboxRequestError';
+  }
+}
+
 /** A path broke the rules in paths.ts, or a copy-out was refused. Safe to show to an LLM. */
-export class SandboxPathError extends SandboxError {
+export class SandboxPathError extends SandboxRequestError {
   constructor(message: string) {
     super(message);
     this.name = 'SandboxPathError';
