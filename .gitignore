@@ -1,0 +1,17 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Secrets: only the example file is committed
+.env
+.env.*
+!.env.example
+
+# Created by the agent at runtime: cloned target repos and run reports
+.workspaces/
+
+# Demo target repos: each is its own git repository, pushed separately
+demo-repos/
+
+*.log
