@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +6,12 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseConfig } from '../../src/config.js';
 import { SandboxError, SandboxPathError } from '../../src/sandbox/errors.js';
-import { CONTAINER_LABEL, Sandbox, sweepContainers } from '../../src/sandbox/sandbox.js';
+import {
+  CONTAINER_LABEL,
+  OWNER_PID_LABEL,
+  Sandbox,
+  sweepContainers,
+} from '../../src/sandbox/sandbox.js';
 
 /**
  * These tests prove the sandbox really is a sandbox. They need Docker running,
@@ -54,6 +59,7 @@ describe('Sandbox', () => {
     expect(info.HostConfig.Binds ?? []).toEqual([]);
     expect(info.Config.User).toBe('node');
     expect(info.Config.Labels[CONTAINER_LABEL]).toBe('1');
+    expect(info.Config.Labels[OWNER_PID_LABEL]).toBe(String(process.pid));
   });
 
   it('runs commands as the unprivileged node user', async () => {
@@ -123,6 +129,23 @@ describe('Sandbox', () => {
     await sandbox.writeFile('nasty.js', nasty);
 
     expect(await sandbox.readFile('nasty.js')).toBe(nasty);
+  });
+
+  it('reads a big file back whole, escape codes and all', async () => {
+    // Bigger than the 60k characters exec() keeps of a command's output, which is
+    // why readFile() must not go through `cat`. Lockfiles are often this big.
+    const big = `${'x'.repeat(100_000)}\n\u001b[31mred\u001b[0m\n`;
+    await sandbox.writeFile('big.txt', big);
+
+    expect(await sandbox.readFile('big.txt')).toBe(big);
+  });
+
+  it('finds matches when searching a single file', async () => {
+    await sandbox.writeFile('single/one.js', 'const a = 1;\nconst target = 2;\n');
+
+    const matches = await sandbox.search('target', { path: 'single/one.js' });
+
+    expect(matches).toEqual([{ path: 'single/one.js', line: 2, text: 'const target = 2;' }]);
   });
 
   it('refuses paths that point outside the repo', async () => {
@@ -269,25 +292,37 @@ describe('Sandbox cleanup', () => {
   });
 
   it('sweeps up containers left behind by a crashed run', async () => {
-    const leftover = await Sandbox.create({ ...sandboxConfig, docker, name: 'test-leftover' });
-
-    const removed = await sweepContainers(docker);
-
-    expect(removed).toBeGreaterThanOrEqual(1);
-    await expect(docker.getContainer(leftover.containerId).inspect()).rejects.toMatchObject({
-      statusCode: 404,
+    // A process that has already exited stands in for the run that crashed.
+    const { pid: deadPid } = spawnSync(process.execPath, ['-e', '']);
+    const leftover = await docker.createContainer({
+      Image: sandboxConfig.image,
+      Entrypoint: ['sleep'],
+      Cmd: ['infinity'],
+      Labels: { [CONTAINER_LABEL]: '1', [OWNER_PID_LABEL]: String(deadPid) },
     });
+    try {
+      await leftover.start();
+
+      const removed = await sweepContainers(docker);
+
+      expect(removed).toBeGreaterThanOrEqual(1);
+      await expect(leftover.inspect()).rejects.toMatchObject({ statusCode: 404 });
+    } finally {
+      await leftover.remove({ force: true }).catch(() => {});
+    }
   });
 
-  it('keeps the containers it is told to keep', async () => {
-    const keep = await Sandbox.create({ ...sandboxConfig, docker, name: 'test-keep' });
+  it('leaves alone the containers of a process that is still running', async () => {
+    // Created by this test process, which is clearly still alive: exactly the
+    // situation of a run in progress in another terminal.
+    const live = await Sandbox.create({ ...sandboxConfig, docker, name: 'test-live' });
     try {
-      await sweepContainers(docker, { keepIds: [keep.containerId] });
+      await sweepContainers(docker);
 
-      const info = await docker.getContainer(keep.containerId).inspect();
+      const info = await docker.getContainer(live.containerId).inspect();
       expect(info.State.Running).toBe(true);
     } finally {
-      await keep.destroy();
+      await live.destroy();
     }
   });
 });

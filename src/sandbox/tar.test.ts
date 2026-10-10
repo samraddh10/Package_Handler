@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -11,6 +19,7 @@ import {
   parseGitLsFiles,
   readGitExecutableBits,
   readSingleFileFromArchive,
+  writeCopiedOutFile,
 } from './tar.js';
 
 const owner = { uid: 1000, gid: 1000 };
@@ -41,10 +50,10 @@ async function readEntries(archive: NodeJS.ReadableStream): Promise<TarEntry[]> 
   return entries;
 }
 
+type ArchiveEntries = Array<{ header: Partial<Header> & { name: string }; body?: string }>;
+
 /** Builds a tar in memory, the way a hostile container might hand one back. */
-async function buildArchive(
-  entries: Array<{ header: Partial<Header> & { name: string }; body?: string }>,
-): Promise<Readable> {
+async function archiveBytes(entries: ArchiveEntries): Promise<Buffer> {
   const archive = pack();
   for (const { header, body } of entries) {
     archive.entry(header, body ?? '');
@@ -55,7 +64,12 @@ async function buildArchive(
   for await (const chunk of archive as AsyncIterable<Buffer>) {
     chunks.push(chunk);
   }
-  return Readable.from([Buffer.concat(chunks)]);
+  return Buffer.concat(chunks);
+}
+
+/** The same tar, as the stream Docker would hand over. */
+async function buildArchive(entries: ArchiveEntries): Promise<Readable> {
+  return Readable.from([await archiveBytes(entries)]);
 }
 
 describe('packRepo', () => {
@@ -187,6 +201,69 @@ describe('readSingleFileFromArchive', () => {
     await expect(readSingleFileFromArchive(archive, 'big.json', 100)).rejects.toThrow(
       /over the 100 byte limit/,
     );
+  });
+
+  it('fails, rather than hanging, when the connection drops halfway', async () => {
+    const bytes = await archiveBytes([
+      { header: { name: 'package.json', type: 'file' }, body: 'x'.repeat(2000) },
+    ]);
+    // The header and part of the body arrive, then the socket dies.
+    const archive = new Readable({ read() {} });
+    archive.push(bytes.subarray(0, 1000));
+    setImmediate(() => archive.destroy(new Error('socket hang up')));
+
+    await expect(readSingleFileFromArchive(archive, 'package.json')).rejects.toThrow(
+      /could not read "package\.json" from the sandbox: socket hang up/,
+    );
+  });
+});
+
+describe('writeCopiedOutFile', () => {
+  let root: string;
+  let outside: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'upgrade-agent-dest-'));
+    outside = mkdtempSync(join(tmpdir(), 'upgrade-agent-outside-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('writes the file, creating the folders on the way', async () => {
+    const written = await writeCopiedOutFile(root, 'src/lib/index.js', Buffer.from('ok'));
+
+    expect(written).toBe(join(root, 'src', 'lib', 'index.js'));
+    expect(readFileSync(written, 'utf8')).toBe('ok');
+  });
+
+  it('refuses to follow a symlinked folder out of the destination', async () => {
+    // What a cloned repo can contain: `lib` pointing somewhere else entirely.
+    // A junction is Windows' folder link and needs no admin rights; on other
+    // systems the type is ignored and this is an ordinary symlink.
+    symlinkSync(outside, join(root, 'lib'), 'junction');
+
+    await expect(writeCopiedOutFile(root, 'lib/evil.js', Buffer.from('x'))).rejects.toThrow(
+      /"lib" is a symlink/,
+    );
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it('refuses to write onto a symlink at the destination itself', async () => {
+    symlinkSync(outside, join(root, 'package.json'), 'junction');
+
+    await expect(writeCopiedOutFile(root, 'package.json', Buffer.from('x'))).rejects.toThrow(
+      SandboxPathError,
+    );
+  });
+
+  it('applies the path rules before touching the disk', async () => {
+    await expect(writeCopiedOutFile(root, '../escape.js', Buffer.from('x'))).rejects.toThrow(
+      SandboxPathError,
+    );
+    await expect(writeCopiedOutFile(root, '.', Buffer.from('x'))).rejects.toThrow(SandboxPathError);
   });
 });
 

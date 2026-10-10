@@ -1,6 +1,5 @@
-import { mkdir, writeFile as writeHostFile } from 'node:fs/promises';
-import { dirname, posix, relative, resolve } from 'node:path';
-import type { Readable } from 'node:stream';
+import { posix } from 'node:path';
+import type { Duplex, Readable } from 'node:stream';
 import Docker from 'dockerode';
 import { SandboxError, SandboxPathError } from './errors.js';
 import { CappedOutput } from './output.js';
@@ -12,6 +11,7 @@ import {
   packSingleFile,
   readGitExecutableBits,
   readSingleFileFromArchive,
+  writeCopiedOutFile,
 } from './tar.js';
 
 /**
@@ -37,12 +37,18 @@ import {
 /** Every container and volume we create carries this label, so a crash can be cleaned up. */
 export const CONTAINER_LABEL = 'upgrade-agent';
 
+/** Records which process created a container, so the sweep can tell leftovers from live runs. */
+export const OWNER_PID_LABEL = `${CONTAINER_LABEL}.pid`;
+
 /** Shared npm cache, so `npm ci` does not re-download the registry for every package. */
 export const NPM_CACHE_VOLUME = 'upgrade-agent-npm-cache';
 const NPM_CACHE_DIR = '/home/node/.npm';
 
 /** The user inside the image that owns the project and runs every command. */
 const CONTAINER_USER = 'node';
+
+/** That user's home folder. It exists in the image and already belongs to `node`. */
+const HOME_DIR = '/home/node';
 
 /**
  * Hard caps on the container. A runaway test suite then hits a wall instead of
@@ -122,12 +128,8 @@ export class Sandbox {
   /**
    * Pulls the image if needed, then creates and starts a locked-down container.
    *
-   * The container's command is `mkdir -p <project> && exec sleep infinity`, run as
-   * `node`. Two reasons: `sleep infinity` keeps it alive for later `exec` calls,
-   * and creating the project folder from inside means the `node` user owns it.
-   * That second part matters more than it looks: if we instead set the container's
-   * WorkingDir to a folder that does not exist, Docker creates it as root and
-   * every later `npm ci` fails with EACCES in its own project folder.
+   * The container's only process is `sleep infinity`, which keeps it alive for
+   * later `exec` calls. The project folder is created afterwards by prepare().
    */
   static async create(options: CreateSandboxOptions): Promise<Sandbox> {
     const { image, cpus, memoryMb, name, useNpmCache = true, onProgress } = options;
@@ -145,16 +147,16 @@ export class Sandbox {
         name: containerName(name),
         Image: image,
         User: CONTAINER_USER,
-        // Must be a folder that already exists and belongs to `node`; see above.
-        WorkingDir: '/home/node',
-        Entrypoint: ['/bin/sh', '-c'],
-        Cmd: [`mkdir -p ${PROJECT_DIR} && exec sleep infinity`],
+        // Must be a folder that already exists and belongs to `node`; see prepare().
+        WorkingDir: HOME_DIR,
+        Entrypoint: ['sleep'],
+        Cmd: ['infinity'],
         Env: [
           // Test runners check CI to stay out of interactive watch mode, which
           // would otherwise hang every `npm test` until the timeout.
           'CI=true',
           'NO_COLOR=1',
-          'HOME=/home/node',
+          `HOME=${HOME_DIR}`,
           `NPM_CONFIG_CACHE=${NPM_CACHE_DIR}`,
           // Noise we would only have to strip out of the logs again.
           'NPM_CONFIG_FUND=false',
@@ -165,6 +167,7 @@ export class Sandbox {
         Labels: {
           [CONTAINER_LABEL]: '1',
           [`${CONTAINER_LABEL}.created`]: new Date().toISOString(),
+          [OWNER_PID_LABEL]: String(process.pid),
         },
         HostConfig: {
           // Memory == MemorySwap means no swap: the limit is a real limit.
@@ -191,7 +194,7 @@ export class Sandbox {
     const sandbox = new Sandbox(docker, container);
     try {
       await container.start();
-      await sandbox.detectOwner();
+      await sandbox.prepare();
       return sandbox;
     } catch (error) {
       // Never leave a container behind because startup failed half way.
@@ -205,18 +208,30 @@ export class Sandbox {
   }
 
   /**
-   * Asks the container which uid/gid the `node` user has, instead of hardcoding
-   * 1000:1000, so a custom image with a different `node` user still ends up with
-   * files it can write.
+   * Creates the project folder as `node`, and asks which uid/gid `node` has.
+   *
+   * The folder must be made by `node` itself. If Docker made it (by naming it as
+   * the container's WorkingDir), it would belong to root, and every `npm ci` would
+   * fail with EACCES in its own project folder. It must also exist before any
+   * other command runs, because an exec whose working folder is missing fails
+   * outright. Doing it here, in the first exec, rather than in the container's
+   * start command avoids a race: `start()` returns as soon as the main process is
+   * launched, not when a start command has finished.
+   *
+   * The uid/gid are asked for instead of hardcoded as 1000:1000, so a custom image
+   * with a different `node` user still ends up with files it can write.
    */
-  private async detectOwner(): Promise<void> {
-    const result = await this.exec(['/bin/sh', '-c', 'id -u; id -g'], { timeoutSec: 15 });
+  private async prepare(): Promise<void> {
+    const result = await this.run(['/bin/sh', '-c', `mkdir -p ${PROJECT_DIR} && id -u && id -g`], {
+      timeoutSec: 15,
+      workingDir: HOME_DIR,
+    });
     const [uidText, gidText] = result.stdout.trim().split('\n');
     const uid = Number(uidText);
     const gid = Number(gidText);
     if (result.outcome !== 'ok' || !Number.isInteger(uid) || !Number.isInteger(gid)) {
       throw new SandboxError(
-        `could not read the container user id: ${firstLine(result.stderr || result.stdout)}`,
+        `could not set up the project folder: ${firstLine(result.stderr || result.stdout)}`,
       );
     }
     this.owner = { uid, gid };
@@ -250,34 +265,63 @@ export class Sandbox {
    * command would otherwise stall the entire run.
    *
    * A non-zero exit code is a result, not an exception: `npm test` failing is the
-   * normal case this whole project is built around.
+   * normal case this whole project is built around. A SandboxError means the
+   * sandbox itself broke, e.g. the container is gone.
    */
   async exec(command: string[], options: ExecOptions): Promise<ExecResult> {
+    const { cwd, ...rest } = options;
+    return this.run(command, {
+      ...rest,
+      workingDir: cwd === undefined ? PROJECT_DIR : toContainerPath(cwd),
+    });
+  }
+
+  /** exec() with an absolute working folder, so prepare() can run outside the project. */
+  private async run(
+    command: string[],
+    options: { timeoutSec: number; workingDir: string; env?: Record<string, string> },
+  ): Promise<ExecResult> {
+    const { timeoutSec, workingDir, env } = options;
     if (command.length === 0) {
       throw new SandboxError('exec() needs a command');
+    }
+    // `timeout 0` means "no limit at all", so a 0 here would silently switch off
+    // the one guarantee this method makes.
+    if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) {
+      throw new SandboxError(`exec() needs a timeout above 0 seconds, got ${timeoutSec}`);
     }
     if (this.removed) {
       throw new SandboxError('this sandbox has been destroyed');
     }
 
-    const { timeoutSec, cwd, env } = options;
     const wrapped = ['timeout', '-s', 'KILL', String(timeoutSec), ...command];
     const stdout = new CappedOutput();
     const stderr = new CappedOutput();
     const startedAt = Date.now();
     let watchdogFired = false;
 
-    const exec = await this.container.exec({
-      Cmd: wrapped,
-      WorkingDir: cwd === undefined ? PROJECT_DIR : toContainerPath(cwd),
-      Env: env === undefined ? undefined : Object.entries(env).map(([key, v]) => `${key}=${v}`),
-      AttachStdin: false,
-      AttachStdout: true,
-      AttachStderr: true,
-      Tty: false,
-    });
-
-    const stream = await exec.start({ hijack: true, stdin: false });
+    let exec: Docker.Exec;
+    let stream: Duplex;
+    try {
+      exec = await this.container.exec({
+        Cmd: wrapped,
+        WorkingDir: workingDir,
+        Env:
+          env === undefined
+            ? undefined
+            : Object.entries(env).map(([key, value]) => `${key}=${value}`),
+        AttachStdin: false,
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty: false,
+      });
+      stream = await exec.start({ hijack: true, stdin: false });
+    } catch (error) {
+      // Usually the container is no longer running, e.g. the watchdog killed it.
+      throw new SandboxError(`could not start "${command.join(' ')}": ${describe(error)}`, {
+        cause: error,
+      });
+    }
     // Without a TTY, Docker sends stdout and stderr down one connection with a
     // small header on each chunk saying which is which. demuxStream splits them.
     this.docker.modem.demuxStream(stream, stdout.sink(), stderr.sink());
@@ -297,6 +341,10 @@ export class Sandbox {
         stream.on('close', resolveStream);
         stream.on('error', rejectStream);
       });
+    } catch (error) {
+      throw new SandboxError(`lost the output of "${command.join(' ')}": ${describe(error)}`, {
+        cause: error,
+      });
     } finally {
       clearTimeout(watchdog);
     }
@@ -311,7 +359,9 @@ export class Sandbox {
 
     return {
       command: wrapped,
-      outcome: await this.classifyExit(exitCode, durationMs, timeoutSec, watchdogFired),
+      outcome: await classifyExit({ exitCode, durationMs, timeoutSec, watchdogFired }, () =>
+        this.wasOomKilled(),
+      ),
       exitCode,
       stdout: stdout.text(),
       stderr: stderr.text(),
@@ -320,13 +370,18 @@ export class Sandbox {
     };
   }
 
-  /** Reads a text file from the repo. Throws when the file does not exist. */
+  /**
+   * Reads a text file from the repo, exactly as it is on disk. Throws when the
+   * file does not exist.
+   *
+   * The file comes out through Docker's archive API, like copyOut(), and not
+   * through `cat`: command output is capped and cleaned of terminal codes (see
+   * output.ts), which would silently cut the middle out of a big file such as
+   * package-lock.json. The copyOut() checks apply too: a regular file only (no
+   * symlinks), up to 5 MB.
+   */
   async readFile(path: string): Promise<string> {
-    const result = await this.exec(['cat', '--', toContainerPath(path)], { timeoutSec: 30 });
-    if (result.outcome !== 'ok') {
-      throw new SandboxError(`could not read "${path}": ${firstLine(result.stderr)}`);
-    }
-    return result.stdout;
+    return (await this.fetchFile(path)).toString('utf8');
   }
 
   /**
@@ -379,6 +434,10 @@ export class Sandbox {
    *
    * The pattern is passed to grep as an argument, never through a shell, so a
    * pattern full of quotes and semicolons is just a pattern.
+   *
+   * `--with-filename` is not optional: when `path` names a single file, grep
+   * leaves the file name out (`12:text` instead of `a.js:12:text`), and every
+   * match would fail to parse below.
    */
   async search(
     pattern: string,
@@ -389,6 +448,7 @@ export class Sandbox {
       [
         'grep',
         '--recursive',
+        '--with-filename',
         '--line-number',
         // Skip binaries: a match inside a .png is noise and can be megabytes long.
         '--binary-files=without-match',
@@ -441,55 +501,57 @@ export class Sandbox {
    * the same way in the baseline and after the upgrade, instead of passing once.
    */
   async disconnectNetwork(): Promise<void> {
-    const info = await this.container.inspect();
-    const networks = Object.keys(info.NetworkSettings?.Networks ?? {});
-    for (const network of networks) {
-      await this.docker.getNetwork(network).disconnect({ Container: this.container.id });
+    try {
+      const info = await this.container.inspect();
+      for (const network of Object.keys(info.NetworkSettings?.Networks ?? {})) {
+        await this.docker.getNetwork(network).disconnect({ Container: this.container.id });
+      }
+    } catch (error) {
+      // Tests must never run with the network still on, so this has to stop the caller.
+      throw new SandboxError(`could not cut the sandbox's network: ${describe(error)}`, {
+        cause: error,
+      });
     }
   }
 
   /**
    * Copies named files out of the container onto the host.
    *
-   * Only the exact paths asked for are fetched, and tar.ts then refuses anything
-   * that is not a plain file under the size cap. Writing to the host is the one
-   * place where container content can affect this machine, so it is the one place
-   * that double-checks everything.
+   * Only the exact paths asked for are fetched; tar.ts then refuses anything that
+   * is not a plain file under the size cap, and refuses to write through a symlink
+   * on the host side. Writing to the host is the one place where container content
+   * can affect this machine, so it is the one place that double-checks everything.
    */
   async copyOut(paths: string[], destDir: string): Promise<string[]> {
-    const destRoot = resolve(destDir);
     const written: string[] = [];
-
     for (const path of paths) {
-      const relativePath = toRelativePath(path);
-      const containerPath = toContainerPath(path);
-      const destination = resolve(destRoot, relativePath);
-      // Paths are validated already; this is the last line of defence before a write.
-      const insideDest = relative(destRoot, destination);
-      if (insideDest.startsWith('..') || insideDest === '') {
-        throw new SandboxPathError(`refusing to write "${path}" outside "${destRoot}"`);
-      }
+      const contents = await this.fetchFile(path);
+      written.push(await writeCopiedOutFile(destDir, path, contents));
+    }
+    return written;
+  }
 
-      let archive: NodeJS.ReadableStream;
-      try {
-        archive = await this.container.getArchive({ path: containerPath });
-      } catch (error) {
-        throw new SandboxError(`could not copy out "${path}": ${describe(error)}`, {
-          cause: error,
-        });
-      }
-
-      const contents = await readSingleFileFromArchive(
-        archive as Readable,
-        posix.basename(relativePath),
-        MAX_COPY_OUT_BYTES,
-      );
-      await mkdir(dirname(destination), { recursive: true });
-      await writeHostFile(destination, contents);
-      written.push(destination);
+  /** Fetches one regular file out of the container as raw bytes, checked by tar.ts. */
+  private async fetchFile(path: string): Promise<Buffer> {
+    const relativePath = toRelativePath(path);
+    if (relativePath === '.') {
+      throw new SandboxPathError('needs a file path, not the repo root');
     }
 
-    return written;
+    let archive: NodeJS.ReadableStream;
+    try {
+      archive = await this.container.getArchive({ path: toContainerPath(relativePath) });
+    } catch (error) {
+      throw new SandboxError(`could not fetch "${path}" from the sandbox: ${describe(error)}`, {
+        cause: error,
+      });
+    }
+    // Docker names the entry after the last path segment, e.g. `index.js` for `src/index.js`.
+    return readSingleFileFromArchive(
+      archive as Readable,
+      posix.basename(relativePath),
+      MAX_COPY_OUT_BYTES,
+    );
   }
 
   /** Removes the container. Safe to call twice, and safe to call on a dead container. */
@@ -512,46 +574,6 @@ export class Sandbox {
     }
   }
 
-  /**
-   * Works out why a command ended.
-   *
-   * `timeout -s KILL` and the kernel's out-of-memory killer both end up as exit
-   * code 137 (128 + SIGKILL), so the code alone cannot tell them apart. Two extra
-   * clues do: how long the command ran, and the container's OOMKilled flag.
-   */
-  private async classifyExit(
-    exitCode: number | null,
-    durationMs: number,
-    timeoutSec: number,
-    watchdogFired: boolean,
-  ): Promise<ExecOutcome> {
-    if (exitCode === 0) {
-      return 'ok';
-    }
-    if (watchdogFired) {
-      return 'timeout';
-    }
-    // 124 is what `timeout` returns when it has to give up on a command.
-    if (exitCode === 124) {
-      return 'timeout';
-    }
-    if (exitCode === 137 || exitCode === null) {
-      if (durationMs >= timeoutSec * 1000 - 1000) {
-        return 'timeout';
-      }
-      // Killed well before the deadline, so the memory limit is the likely reason.
-      // Exit 137 means "killed by SIGKILL", and inside a container with a memory
-      // cap that is almost always the kernel's out-of-memory killer. The
-      // container's own flag is only set when its main process died, so a missing
-      // flag does not rule it out.
-      if (exitCode === 137) {
-        return 'out-of-memory';
-      }
-      return (await this.wasOomKilled()) ? 'out-of-memory' : 'failed';
-    }
-    return 'failed';
-  }
-
   private async wasOomKilled(): Promise<boolean> {
     try {
       return (await this.container.inspect()).State?.OOMKilled === true;
@@ -559,6 +581,60 @@ export class Sandbox {
       return false;
     }
   }
+}
+
+/** What classifyExit() knows about a finished command. */
+export interface ExitFacts {
+  /** null when the exit code could not be read, e.g. the container was killed. */
+  exitCode: number | null;
+  durationMs: number;
+  timeoutSec: number;
+  /** True when the host watchdog had to kill the whole container. */
+  watchdogFired: boolean;
+}
+
+/**
+ * Works out why a command ended.
+ *
+ * `timeout -s KILL` and the kernel's out-of-memory killer both end up as exit
+ * code 137 (128 + SIGKILL), so the code alone cannot tell them apart. Two extra
+ * clues do: how long the command ran, and the container's OOMKilled flag. The
+ * flag costs a call to Docker, so `wasOomKilled` is only asked when needed.
+ *
+ * npm passes a killed script's 137 straight through (checked by hand), so this
+ * works for `npm test` as well as for a bare command.
+ */
+export async function classifyExit(
+  facts: ExitFacts,
+  wasOomKilled: () => Promise<boolean>,
+): Promise<ExecOutcome> {
+  const { exitCode, durationMs, timeoutSec, watchdogFired } = facts;
+  if (exitCode === 0) {
+    return 'ok';
+  }
+  if (watchdogFired) {
+    return 'timeout';
+  }
+  // 124 is what `timeout` returns when it gives up on a command with a catchable
+  // signal. With `-s KILL` it is 137 instead, but 124 still means "timed out".
+  if (exitCode === 124) {
+    return 'timeout';
+  }
+  if (exitCode === 137 || exitCode === null) {
+    if (durationMs >= timeoutSec * 1000 - 1000) {
+      return 'timeout';
+    }
+    // Killed well before the deadline, so the memory limit is the likely reason.
+    // Exit 137 means "killed by SIGKILL", and inside a container with a memory
+    // cap that is almost always the kernel's out-of-memory killer. The
+    // container's own flag is only set when its main process died, so a missing
+    // flag does not rule it out.
+    if (exitCode === 137) {
+      return 'out-of-memory';
+    }
+    return (await wasOomKilled()) ? 'out-of-memory' : 'failed';
+  }
+  return 'failed';
 }
 
 /**
@@ -585,23 +661,30 @@ export async function ensureImage(
   }
 
   onProgress?.(`pulling ${image}, this happens once and takes a few minutes`);
-  const stream = await docker.pull(image);
-  let lastStatus = '';
-  await new Promise<void>((resolvePull, rejectPull) => {
-    // Docker streams pull progress as one JSON object per layer event;
-    // followProgress parses them and calls back when the pull is finished.
-    docker.modem.followProgress(
-      stream,
-      (error) => (error ? rejectPull(error) : resolvePull()),
-      (event: { status?: string }) => {
-        // Every layer reports the same handful of statuses, so only report changes.
-        if (event.status !== undefined && event.status !== lastStatus) {
-          lastStatus = event.status;
-          onProgress?.(event.status);
-        }
-      },
-    );
-  });
+  try {
+    const stream = await docker.pull(image);
+    let lastStatus = '';
+    await new Promise<void>((resolvePull, rejectPull) => {
+      // Docker streams pull progress as one JSON object per layer event;
+      // followProgress parses them and calls back when the pull is finished.
+      docker.modem.followProgress(
+        stream,
+        (error) => (error ? rejectPull(error) : resolvePull()),
+        (event: { status?: string }) => {
+          // Every layer reports the same handful of statuses, so only report changes.
+          if (event.status !== undefined && event.status !== lastStatus) {
+            lastStatus = event.status;
+            onProgress?.(event.status);
+          }
+        },
+      );
+    });
+  } catch (error) {
+    // A typo in SANDBOX_IMAGE, no internet, or a registry rate limit.
+    throw new SandboxError(`could not pull the image "${image}": ${describe(error)}`, {
+      cause: error,
+    });
+  }
   return { pulled: true };
 }
 
@@ -656,12 +739,14 @@ export async function ensureNpmCacheVolume(docker: Docker, image: string): Promi
  * Containers are normally destroyed in a `finally` block, but a power cut or a
  * killed terminal skips that. Everything we create carries the `upgrade-agent`
  * label, so one call at startup can find the leftovers.
+ *
+ * Labelled is not the same as left over, though. A run in another terminal (or,
+ * from Phase 2, the worker process) has live containers with the same label, and
+ * removing one would kill that run halfway through. So each container also
+ * records the PID of the process that created it, and only containers whose
+ * creator has exited are removed.
  */
-export async function sweepContainers(
-  docker: Docker,
-  options: { keepIds?: readonly string[] } = {},
-): Promise<number> {
-  const keep = new Set(options.keepIds ?? []);
+export async function sweepContainers(docker: Docker): Promise<number> {
   const containers = await docker.listContainers({
     all: true,
     filters: JSON.stringify({ label: [`${CONTAINER_LABEL}=1`] }),
@@ -669,7 +754,7 @@ export async function sweepContainers(
 
   let removed = 0;
   for (const info of containers) {
-    if (keep.has(info.Id)) {
+    if (!isLeftover(info.Labels)) {
       continue;
     }
     try {
@@ -684,6 +769,33 @@ export async function sweepContainers(
     }
   }
   return removed;
+}
+
+/**
+ * True when nothing alive owns this container: its creator process has exited,
+ * or it carries no creator PID at all (made by a version without the label).
+ */
+export function isLeftover(labels: Readonly<Record<string, string>> | undefined): boolean {
+  const pid = Number(labels?.[OWNER_PID_LABEL]);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return true;
+  }
+  return !processIsAlive(pid);
+}
+
+/**
+ * Signal 0 delivers nothing; it only asks whether the process exists. This works
+ * on Windows too. PIDs are per machine, so this assumes the Docker daemon is not
+ * shared with other computers.
+ */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: it exists but belongs to another user, which still means alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 /** Checks that the Docker daemon is reachable and returns its version. */

@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process';
-import { relative, sep } from 'node:path';
+import type { Stats } from 'node:fs';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { pack as packDirectory } from 'tar-fs';
 import { extract, pack } from 'tar-stream';
 import { SandboxError, SandboxPathError } from './errors.js';
+import { toRelativePath } from './paths.js';
 
 /**
  * Moving files in and out of the container.
@@ -21,7 +24,8 @@ import { SandboxError, SandboxPathError } from './errors.js';
  *    project folder.
  *  - **Trust.** Files coming out were produced by untrusted code, so a tar entry
  *    may be a symlink to `/etc/shadow`, or a path like `../../.git/hooks/pre-commit`.
- *    We accept regular files only, at the exact path we asked for, under a size cap.
+ *    We accept regular files only, at the exact path we asked for, under a size cap,
+ *    and the host write refuses to follow a symlink out of the destination folder.
  *
  * One wrinkle: tar-stream 3 is built on `streamx`, not `node:stream`. The two
  * behave the same way when piping (that is the whole point of streamx), but
@@ -37,7 +41,11 @@ export interface Ownership {
   gid: number;
 }
 
-/** Never copied into the container. */
+/**
+ * Top-level folders never copied into the container. A nested `node_modules` is
+ * copied: in a clone it can only be there because the repo committed it, e.g. as
+ * a test fixture, and the tests may need it.
+ */
 const SKIPPED_DIRS = new Set([
   // Git history is useless inside the sandbox, and it is the biggest part of a clone.
   '.git',
@@ -125,6 +133,10 @@ export async function readSingleFileFromArchive(
   maxBytes: number = MAX_COPY_OUT_BYTES,
 ): Promise<Buffer> {
   const extractor = extract();
+  // pipe() does not pass errors along. If Docker's connection broke halfway, the
+  // extractor would wait forever for the rest of the archive; forwarding the
+  // error makes the loop below throw instead.
+  archive.on('error', (error) => extractor.destroy(error));
   archive.pipe(extractor as unknown as NodeJS.WritableStream);
 
   let contents: Buffer | undefined;
@@ -167,6 +179,15 @@ export async function readSingleFileFromArchive(
       }
       contents = Buffer.concat(chunks);
     }
+  } catch (error) {
+    if (error instanceof SandboxError) {
+      throw error;
+    }
+    // A broken connection or a truncated archive: the sandbox failed, not a rule.
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new SandboxError(`could not read "${expectedName}" from the sandbox: ${reason}`, {
+      cause: error,
+    });
   } finally {
     archive.destroy();
     extractor.destroy();
@@ -176,6 +197,63 @@ export async function readSingleFileFromArchive(
     throw new SandboxError(`the archive for "${expectedName}" was empty`);
   }
   return contents;
+}
+
+/**
+ * Writes a file that came out of the container to `<destRoot>/<path>` on the host,
+ * and returns where it went.
+ *
+ * `path` goes through the paths.ts rules like every other path, but text checks
+ * alone are not enough here. The destination is normally a clone of the target
+ * repo, and a repo can commit a symlink: with `lib -> ../../..` in the clone,
+ * writing `lib/x.js` would follow the link and land outside the workspace. So
+ * every folder on the way down from `destRoot`, and the file itself, must be a
+ * real folder or file, never a symlink (or, on Windows, a junction). Folders that
+ * do not exist yet are created by us, so they are real folders.
+ */
+export async function writeCopiedOutFile(
+  destRoot: string,
+  path: string,
+  contents: Buffer,
+): Promise<string> {
+  const relativePath = toRelativePath(path);
+  if (relativePath === '.') {
+    throw new SandboxPathError('copy-out needs a file path, not the folder itself');
+  }
+
+  const root = resolve(destRoot);
+  const segments = relativePath.split('/');
+  let current = root;
+  for (const segment of segments) {
+    current = join(current, segment);
+    const stats = await lstatIfExists(current);
+    if (stats === undefined) {
+      // Nothing below a missing folder can exist either.
+      break;
+    }
+    if (stats.isSymbolicLink()) {
+      throw new SandboxPathError(
+        `refusing to write "${relativePath}": "${toPosixPath(relative(root, current))}" is a symlink`,
+      );
+    }
+  }
+
+  const destination = join(root, ...segments);
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(destination, contents);
+  return destination;
+}
+
+/** lstat() looks at a symlink itself instead of following it. Missing paths give undefined. */
+async function lstatIfExists(path: string): Promise<Stats | undefined> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 /**

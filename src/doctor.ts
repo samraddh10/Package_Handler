@@ -100,7 +100,8 @@ export async function checkDocker(
     const { pulled } = await ensureImage(docker, image, options.onProgress);
     check.image = { name: image, pulled };
 
-    // Before creating our own container, so we never sweep it away.
+    // Only removes containers whose creating process has exited, so running doctor
+    // while a run is going on in another terminal does not break that run.
     check.sweptContainers = await sweepContainers(docker);
 
     const sandbox = await Sandbox.create({ ...config.sandbox, docker, name: 'doctor' });
