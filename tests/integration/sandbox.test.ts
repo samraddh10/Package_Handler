@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseConfig } from '../../src/config.js';
-import { SandboxError, SandboxPathError } from '../../src/sandbox/errors.js';
+import { SandboxError, SandboxPathError, SandboxRequestError } from '../../src/sandbox/errors.js';
 import {
   CONTAINER_LABEL,
   OWNER_PID_LABEL,
@@ -151,6 +151,23 @@ describe('Sandbox', () => {
   it('refuses paths that point outside the repo', async () => {
     await expect(sandbox.readFile('../../etc/passwd')).rejects.toThrow(SandboxPathError);
     await expect(sandbox.writeFile('/etc/passwd', 'x')).rejects.toThrow(SandboxPathError);
+  });
+
+  it('reports requests that cannot be done as request errors, which the agent shows the model', async () => {
+    // These are the model's everyday mistakes, not a broken sandbox.
+    await expect(sandbox.readFile('no/such/file.js')).rejects.toThrow(
+      new SandboxRequestError('"no/such/file.js" does not exist'),
+    );
+    await expect(sandbox.readFile('src')).rejects.toThrow(SandboxRequestError);
+    await expect(sandbox.listFiles('no-such-folder')).rejects.toThrow(SandboxRequestError);
+    await expect(sandbox.search('(unclosed', { isRegex: true })).rejects.toThrow(
+      SandboxRequestError,
+    );
+    await expect(sandbox.search('x', { path: 'no-such-folder' })).rejects.toThrow(
+      SandboxRequestError,
+    );
+    await sandbox.writeFile('blocker', 'a file where a folder should be');
+    await expect(sandbox.writeFile('blocker/inner.js', 'x')).rejects.toThrow(SandboxRequestError);
   });
 });
 
