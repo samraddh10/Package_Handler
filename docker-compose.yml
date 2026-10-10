@@ -1,0 +1,22 @@
+# Supporting services for local development.
+# Start Redis with: docker compose up -d redis
+name: upgrade-agent
+
+services:
+  redis:
+    image: redis:8-alpine
+    # Bound to 127.0.0.1 so only this machine can reach it: it has no password.
+    ports:
+      - "127.0.0.1:6379:6379"
+    # Append-only file: the changelog cache survives restarts.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis-data:
