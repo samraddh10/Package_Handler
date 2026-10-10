@@ -29,7 +29,8 @@ export interface Config {
     installTimeoutSec: number;
     testTimeoutSec: number;
   };
-  fixAgent: { maxAttempts: number; maxSteps: number };
+  /** Limits for one package's fix-agent session. */
+  fixAgent: { maxAttempts: number; maxSteps: number; maxTokens: number };
   workspaceDir: string;
 }
 
@@ -95,6 +96,7 @@ const envSchema = z.object({
 
   FIX_MAX_ATTEMPTS: positiveInt.default(3),
   FIX_MAX_STEPS: positiveInt.default(20),
+  FIX_MAX_TOKENS: positiveInt.default(200_000),
 
   WORKSPACE_DIR: z.string().default('.workspaces'),
 });
@@ -145,7 +147,11 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
       installTimeoutSec: values.INSTALL_TIMEOUT_SEC,
       testTimeoutSec: values.TEST_TIMEOUT_SEC,
     },
-    fixAgent: { maxAttempts: values.FIX_MAX_ATTEMPTS, maxSteps: values.FIX_MAX_STEPS },
+    fixAgent: {
+      maxAttempts: values.FIX_MAX_ATTEMPTS,
+      maxSteps: values.FIX_MAX_STEPS,
+      maxTokens: values.FIX_MAX_TOKENS,
+    },
     workspaceDir: values.WORKSPACE_DIR,
   };
 }
