@@ -16,16 +16,22 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:int": "vitest run --config vitest.integration.config.ts",
     "lint": "biome check .",
     "format": "biome check --write ."
   },
   "dependencies": {
     "commander": "^15.0.0",
+    "dockerode": "^5.0.1",
+    "tar-fs": "^3.1.3",
+    "tar-stream": "^3.2.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
+    "@types/dockerode": "^4.0.2",
     "@types/node": "^22.20.4",
+    "@types/tar-fs": "^2.0.4",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
