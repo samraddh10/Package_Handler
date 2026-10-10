@@ -1,7 +1,7 @@
 import { posix } from 'node:path';
 import type { Duplex, Readable } from 'node:stream';
 import Docker from 'dockerode';
-import { SandboxError, SandboxPathError } from './errors.js';
+import { SandboxError, SandboxPathError, SandboxRequestError } from './errors.js';
 import { CappedOutput } from './output.js';
 import { PROJECT_DIR, toContainerPath, toRelativePath } from './paths.js';
 import {
@@ -379,8 +379,8 @@ export class Sandbox {
   }
 
   /**
-   * Reads a text file from the repo, exactly as it is on disk. Throws when the
-   * file does not exist.
+   * Reads a text file from the repo, exactly as it is on disk. A file that does
+   * not exist is a SandboxRequestError.
    *
    * The file comes out through Docker's archive API, like copyOut(), and not
    * through `cat`: command output is capped and cleaned of terminal codes (see
@@ -410,10 +410,14 @@ export class Sandbox {
       const mkdirResult = await this.exec(['mkdir', '-p', '--', toContainerPath(parent)], {
         timeoutSec: 30,
       });
-      if (mkdirResult.outcome !== 'ok') {
-        throw new SandboxError(
+      if (mkdirResult.outcome === 'failed') {
+        // Usually a file already sits where a folder is needed.
+        throw new SandboxRequestError(
           `could not create the folder for "${path}": ${firstLine(mkdirResult.stderr)}`,
         );
+      }
+      if (mkdirResult.outcome !== 'ok') {
+        throw new SandboxError(`could not create the folder for "${path}": ${mkdirResult.outcome}`);
       }
     }
 
@@ -425,13 +429,19 @@ export class Sandbox {
     }
   }
 
-  /** Lists one folder of the repo. Folder names come back with a trailing slash. */
+  /**
+   * Lists one folder of the repo. Folder names come back with a trailing slash.
+   * A folder that does not exist is a SandboxRequestError.
+   */
   async listFiles(path = '.', options: { limit?: number } = {}): Promise<string[]> {
     const result = await this.exec(['ls', '-A', '-p', '--', toContainerPath(path)], {
       timeoutSec: 30,
     });
+    if (result.outcome === 'failed') {
+      throw new SandboxRequestError(`could not list "${path}": ${firstLine(result.stderr)}`);
+    }
     if (result.outcome !== 'ok') {
-      throw new SandboxError(`could not list "${path}": ${firstLine(result.stderr)}`);
+      throw new SandboxError(`could not list "${path}": ${result.outcome}`);
     }
     const entries = result.stdout.split('\n').filter((entry) => entry !== '');
     return entries.slice(0, options.limit ?? 200);
@@ -469,7 +479,11 @@ export class Sandbox {
       ],
       { timeoutSec: 60 },
     );
-    // grep exits 1 when there are simply no matches, which is not an error.
+    // grep exits 1 when there are simply no matches, which is not an error, and
+    // 2 when it could not do what was asked: a missing path, a broken regex.
+    if (result.outcome === 'failed' && result.exitCode === 2) {
+      throw new SandboxRequestError(`search failed: ${firstLine(result.stderr)}`);
+    }
     if (result.outcome !== 'ok' && result.exitCode !== 1) {
       throw new SandboxError(`search failed: ${firstLine(result.stderr)}`);
     }
@@ -550,6 +564,9 @@ export class Sandbox {
     try {
       archive = await this.container.getArchive({ path: toContainerPath(relativePath) });
     } catch (error) {
+      if (isNotFound(error)) {
+        throw new SandboxRequestError(`"${relativePath}" does not exist`);
+      }
       throw new SandboxError(`could not fetch "${path}" from the sandbox: ${describe(error)}`, {
         cause: error,
       });
