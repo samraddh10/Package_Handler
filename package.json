@@ -21,8 +21,14 @@
     "format": "biome check --write ."
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.93",
+    "@ai-sdk/groq": "^4.0.59",
+    "@octokit/rest": "^22.0.1",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.137",
     "commander": "^15.0.0",
     "dockerode": "^5.0.1",
+    "ioredis": "^6.0.0",
     "semver": "^7.8.5",
     "simple-git": "^4.0.2",
     "tar-fs": "^3.1.3",
