@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig } from './config.js';
-import { describeConfig } from './doctor.js';
+import { type DockerCheck, describeConfig, describeDockerCheck } from './doctor.js';
 
 describe('describeConfig', () => {
   it('never prints secret values', () => {
@@ -39,5 +39,64 @@ describe('describeConfig', () => {
 
     expect(report[0]).toContain('not found');
     expect(report.join('\n')).toContain('Warning: no provider is ready');
+  });
+});
+
+describe('describeDockerCheck', () => {
+  const working: DockerCheck = {
+    ok: true,
+    serverVersion: '29.6.2',
+    image: { name: 'node:22-bookworm', pulled: false },
+    sweptContainers: 0,
+    smoke: { nodeVersion: 'v22.21.0' },
+    error: null,
+  };
+
+  it('reports a healthy Docker setup', () => {
+    const report = describeDockerCheck(working).join('\n');
+
+    expect(report).toContain('Docker:       running (server 29.6.2)');
+    expect(report).toContain('Image:        node:22-bookworm (already on this machine)');
+    expect(report).toContain('Sandbox:      smoke test passed (v22.21.0, files writable)');
+    expect(report).not.toContain('failed');
+  });
+
+  it('says when the image had to be pulled and leftovers were cleaned up', () => {
+    const report = describeDockerCheck({
+      ...working,
+      image: { name: 'node:22-bookworm', pulled: true },
+      sweptContainers: 2,
+    }).join('\n');
+
+    expect(report).toContain('(pulled just now)');
+    expect(report).toContain('removed 2 leftover containers');
+  });
+
+  it('tells the user to start Docker when the daemon is unreachable', () => {
+    const report = describeDockerCheck({
+      ok: false,
+      serverVersion: null,
+      image: null,
+      sweptContainers: 0,
+      smoke: null,
+      error: 'could not reach the Docker daemon: connect ENOENT',
+    });
+
+    expect(report[0]).toContain('not reachable');
+    expect(report[1]).toContain('Start Docker Desktop');
+    // Nothing else ran, so nothing else is claimed.
+    expect(report).toHaveLength(2);
+  });
+
+  it('reports a failed smoke test even though Docker itself answered', () => {
+    const report = describeDockerCheck({
+      ...working,
+      ok: false,
+      smoke: null,
+      error: 'could not create a container from "node:22-bookworm": no such image',
+    }).join('\n');
+
+    expect(report).toContain('Docker:       running');
+    expect(report).toContain('Sandbox:      smoke test failed (could not create a container');
   });
 });
