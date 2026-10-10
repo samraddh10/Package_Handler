@@ -1,4 +1,5 @@
 import Docker from 'dockerode';
+import { openCache } from './cache/cache.js';
 import type { Config } from './config.js';
 import { ensureImage, pingDocker, Sandbox, sweepContainers } from './sandbox/sandbox.js';
 
@@ -39,7 +40,7 @@ export function describeConfig(config: Config, envFileFound: boolean): string[] 
   lines.push(
     '',
     `GitHub token: ${config.github.token ? 'set' : 'not set (needed to open pull requests)'}`,
-    `Redis:        ${redactPassword(config.redis.url)}`,
+    `Redis:        ${redactPassword(config.redis.url)}, password ${config.redis.password ? 'set' : 'not set'}`,
     `Sandbox:      ${sandbox.image}, ${sandbox.cpus} CPUs, ${sandbox.memoryMb} MB memory`,
     `Timeouts:     install ${sandbox.installTimeoutSec}s, tests ${sandbox.testTimeoutSec}s`,
     `Fix agent:    up to ${fixAgent.maxAttempts} test attempts, ${fixAgent.maxSteps} steps`,
@@ -155,4 +156,24 @@ export function describeDockerCheck(check: DockerCheck): string[] {
     lines.push(`Sandbox:      smoke test failed (${check.error ?? 'unknown error'})`);
   }
   return lines;
+}
+
+/**
+ * Connects to Redis and logs in, the same way a run does. Redis is optional
+ * (without it the changelog cache only lasts one run), so a failure is a
+ * warning, not an error: the returned line says what happened.
+ */
+export async function checkRedis(redis: Config['redis']): Promise<{ ok: boolean; line: string }> {
+  let warning: string | null = null;
+  const cache = await openCache({
+    ...redis,
+    onWarning: (message) => {
+      warning = message;
+    },
+  });
+  await cache.close();
+  if (warning === null) {
+    return { ok: true, line: 'Redis check:  connected, password accepted (changelog cache is on)' };
+  }
+  return { ok: false, line: `Redis check:  warning: ${warning}` };
 }
