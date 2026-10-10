@@ -4,7 +4,7 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "types": ["node"],
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist",
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "sourceMap": true
   },
-  "include": ["src"]
+  "include": ["src", "tests", "*.config.ts"]
 }
