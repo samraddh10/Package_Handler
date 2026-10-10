@@ -10,13 +10,14 @@ describe('describeConfig', () => {
       GROQ_MODEL: 'some-model',
       GITHUB_TOKEN: secret,
       REDIS_URL: `redis://user:${secret}@localhost:6379`,
+      REDIS_PASSWORD: secret,
     });
 
     const report = describeConfig(config, true).join('\n');
 
     expect(report).not.toContain(secret);
     expect(report).toContain('GitHub token: set');
-    expect(report).toContain('redis://user:***@localhost:6379');
+    expect(report).toContain('redis://user:***@localhost:6379, password set');
   });
 
   it('marks providers without a key or a model as skipped', () => {
