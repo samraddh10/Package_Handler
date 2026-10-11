@@ -1,7 +1,9 @@
+import { asSchema } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { FakeSandbox, failingTests } from '../../tests/helpers/fake-sandbox.js';
 import { SandboxError } from '../sandbox/errors.js';
 import {
+  fixTools,
   keepFileConventions,
   MAX_LIST_ENTRIES,
   MAX_READ_LINES,
@@ -271,6 +273,25 @@ describe('ToolRunner input checks', () => {
     );
     expect((await runner.run('read_file', { path: 3 })).text).toMatch(
       /^Error: invalid input for read_file/,
+    );
+  });
+
+  // Gemini sent {"pattern":"del","isRegex":false} in a real run; the SDK validates
+  // tool calls against these schemas before the loop ever sees them.
+  it('accepts optional fields left out, in the SDK check and in the runner', async () => {
+    const sdkCheck = asSchema(fixTools.search_code.inputSchema);
+    expect(await sdkCheck.validate?.({ pattern: 'del', isRegex: false })).toEqual({
+      success: true,
+      value: { pattern: 'del', isRegex: false, path: null },
+    });
+    expect((await sdkCheck.jsonSchema).required).toEqual(['pattern', 'isRegex']);
+
+    const runner = runnerFor(new FakeSandbox({ files: { 'src/a.js': 'one\ntwo\n' } }));
+    expect((await runner.run('search_code', { pattern: 'two', isRegex: false })).text).toBe(
+      'src/a.js:2: two',
+    );
+    expect((await runner.run('read_file', { path: 'src/a.js' })).text).toBe(
+      'src/a.js, lines 1-2 of 2:\n1| one\n2| two',
     );
   });
 });
