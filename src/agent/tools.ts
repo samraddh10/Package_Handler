@@ -40,20 +40,31 @@ const MAX_LINE_CHARS = 500;
 /** Most characters write_file accepts: source files are far smaller, and this caps a runaway. */
 export const MAX_WRITE_CHARS = 200_000;
 
-/** Each tool's input. The `.describe()` texts reach the model as part of the schema. */
+/**
+ * Each tool's input. The `.describe()` texts reach the model as part of the schema.
+ * Optional fields are `.nullable().default(null)`: in a real run Gemini left out a
+ * plain `.nullable()` field (required in the JSON schema) and the call was rejected.
+ */
 const inputs = {
   list_files: z.object({
     path: z.string().describe('Folder relative to the project root; "." is the root'),
   }),
   read_file: z.object({
     path: z.string().describe('File path relative to the project root'),
-    startLine: z.number().int().min(1).nullable().describe('First line to read; null = 1'),
+    startLine: z
+      .number()
+      .int()
+      .min(1)
+      .nullable()
+      .default(null)
+      .describe('First line to read; omitted or null = 1'),
     endLine: z
       .number()
       .int()
       .min(1)
       .nullable()
-      .describe('Last line to read; null = as far as allowed'),
+      .default(null)
+      .describe('Last line to read; omitted or null = as far as allowed'),
   }),
   search_code: z.object({
     pattern: z.string().min(1).describe('Text to look for, or an extended regex'),
@@ -61,7 +72,8 @@ const inputs = {
     path: z
       .string()
       .nullable()
-      .describe('Folder or file to search; null = the whole project minus node_modules'),
+      .default(null)
+      .describe('Folder or file to search; omitted or null = the whole project minus node_modules'),
   }),
   write_file: z.object({
     path: z.string().describe('File path relative to the project root'),
